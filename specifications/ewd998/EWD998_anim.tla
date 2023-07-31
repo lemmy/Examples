@@ -72,7 +72,7 @@ RingNetwork ==
                 node == Rect(coord.x, coord.y, NodeDimension, NodeDimension,
                                             \* round (rx=15) if node is active.
                                             [rx |-> IF ~active[n] THEN "0" ELSE "15",
-                                            stroke |-> "black",
+                                            stroke |-> IF enum[n] THEN "black" ELSE "red",
                                             fill |-> color[n]])
             IN Group(<<node, id>>, ("transform" :> "translate(0 125)"))
     IN Group(RN, <<>>)

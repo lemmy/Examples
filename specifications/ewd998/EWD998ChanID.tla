@@ -50,9 +50,10 @@ VARIABLES
  counter,
  inbox,
  clock,
- passes
+ passes,
+ enum
   
-vars == <<active, color, counter, inbox, clock, passes>>
+vars == <<active, color, counter, inbox, clock, passes, enum>>
 
 terminated ==
     \A n \in Node :
@@ -84,21 +85,25 @@ Init ==
                 ELSE [ m \in Node |-> 0 ] ]
   (* Rule 0 *)
   /\ counter = [n \in Node |-> 0] \* c properly initialized
-\*   /\ inbox = [n \in Node |-> IF n = Initiator 
-\*                               THEN << [type |-> "tok", q |-> 0, color |-> "black", vc |-> clock[n] ] >> 
-\*                               ELSE <<>>] \* with empty channels.
+  /\ inbox = [n \in Node |-> IF n = Initiator 
+                              THEN << [type |-> "tok", q |-> 0, color |-> "black", vc |-> clock[n] ] >> 
+                              ELSE <<>>] \* with empty channels.
 \* The token may be at any node of the ring initially.
 \*   /\ inbox \in { f \in 
 \*                     [ Node -> {<<>>, <<[type |-> "tok", q |-> 0, color |-> "black", vc |-> clock[Initiator] ]>> } ] : 
 \*                         Cardinality({ i \in DOMAIN f: f[i] # <<>> }) = 1 }
 \* Worst-case WRT Max3TokenRounds, token is at node N-2.
-  /\ inbox = [n \in Node |-> IF n = nat2node[N-2] 
-                              THEN << [type |-> "tok", q |-> 0, color |-> "black", vc |-> clock[n] ] >> 
-                              ELSE <<>>] \* with empty channels.
+\*   /\ inbox = [n \in Node |-> IF n = nat2node[N-2] 
+\*                               THEN << [type |-> "tok", q |-> 0, color |-> "black", vc |-> clock[n] ] >> 
+\*                               ELSE <<>>] \* with empty channels.
   (* EWD840 *) 
   /\ active \in [Node -> {FALSE}]
   /\ color \in [Node -> {"black"}]
   /\ passes = IF terminated THEN 0 ELSE -1
+  \* The enum bit of the node owning the token is flipped. However,
+  \* this node has to be the initiator.  Otherwise, the main safety
+  \* property of this algorithm is violated.
+  /\ enum = [n \in Node |-> IF \E i \in 1..Len(inbox[n]): inbox[n][i].type = "tok" THEN FALSE ELSE TRUE]
 
 InitiateProbe(n) ==
   /\ n = Initiator
@@ -121,6 +126,8 @@ InitiateProbe(n) ==
              ![Initiator] = RemoveAt(@, j) ] \* consume token message from inbox[0]. 
   (* Rule 6 *)
   /\ color' = [ color EXCEPT ![Initiator] = "white" ]
+  \* 6. enum.j := ~(enum.j)
+  /\ enum' = [ enum EXCEPT ![n] = ~ @ ]
   \* The state of the nodes remains unchanged by token-related actions.
   /\ UNCHANGED <<active, counter>>
   /\ passes' = IF passes >= 0 THEN passes + 1 ELSE passes
@@ -143,6 +150,8 @@ PassToken(n) ==
                                     ![n] = RemoveAt(@, j) ] \* pass on the token.
   (* Rule 7 *)
   /\ color' = [ color EXCEPT ![n] = "white" ]
+  \* 6. enum.j := ~(enum.j)
+  /\ enum' = [ enum EXCEPT ![n] = ~ @ ]
   \* The state of the nodes remains unchanged by token-related actions.
   /\ UNCHANGED <<active, counter>>                            
   /\ passes' = IF passes >= 0 THEN passes + 1 ELSE passes
@@ -161,31 +170,31 @@ SendMsg(n) ==
   \* Non-deterministically choose a receiver node.
   /\ \E j \in Node \ {n} :
           \* Send a message (not the token) to j.
-          /\ inbox' = [inbox EXCEPT ![j] = Append(@, [type |-> "pl", src |-> n, vc |-> clock[n]' ] ) ]
+          /\ inbox' = [inbox EXCEPT ![j] = Append(@, [type |-> "pl", src |-> n, vc |-> clock[n]', enum |-> enum[n] ] ) ]
           \* Note that we don't blacken node i as in EWD840 if node i
           \* sends a message to node j with j > i
-  /\ UNCHANGED <<active, color, passes>>
+  /\ UNCHANGED <<active, color, passes, enum>>
 
 \* RecvMsg could write the incoming message to a (Java) buffer from which the (Java) implementation consumes it. 
 RecvMsg(n) ==
   (* Rule 0 *)
   /\ counter' = [counter EXCEPT ![n] = @ - 1]
-  (* Rule 3 *)
-  /\ color' = [ color EXCEPT ![n] = "black" ]
   \* Receipt of a message activates node n.
   /\ active' = [ active EXCEPT ![n] = TRUE ]
   \* Consume a message (not the token!).
   /\ \E j \in 1..Len(inbox[n]) : 
           /\ inbox[n][j].type = "pl"
+          (* Rule 3 *)
+          /\ color' = [ color EXCEPT ![n] = IF enum[n] # inbox[n][j].enum THEN "black" ELSE @ ]
           /\ inbox' = [inbox EXCEPT ![n] = RemoveAt(@, j) ]
           /\ clock' = [ clock EXCEPT ![n] = Merge(n, inbox[n][j].vc, @) ]
-  /\ UNCHANGED passes
+  /\ UNCHANGED <<passes, enum>>
 
 Deactivate(n) ==
   /\ active[n]
   /\ active' = [active EXCEPT ![n] = FALSE]
   /\ clock' = [ clock EXCEPT ![n][n] = @ + 1 ]
-  /\ UNCHANGED <<color, inbox, counter>>
+  /\ UNCHANGED <<color, inbox, counter, enum>>
   /\ passes' = IF terminated' THEN 0 ELSE passes
 
 Environment(n) == 
@@ -269,6 +278,6 @@ THEOREM Spec => EWD998Safe /\ EWD998Live
 
 \* The (vector) clock is not relevant for the correctness of the algorithm.
 View == 
-    <<active, color, counter, EWD998ChanInbox, passes>>
+    <<active, color, counter, EWD998ChanInbox, passes, enum>>
 
 =============================================================================
