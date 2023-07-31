@@ -98,8 +98,8 @@ Init ==
 \*                               THEN << [type |-> "tok", q |-> 0, color |-> "black", vc |-> clock[n] ] >> 
 \*                               ELSE <<>>] \* with empty channels.
   (* EWD840 *) 
-  /\ active \in [Node -> {FALSE}]
-  /\ color \in [Node -> {"black"}]
+  /\ active \in [Node -> {FALSE} ]
+  /\ color \in [Node -> Color]
   /\ passes = IF terminated THEN 0 ELSE -1
   \* The enum bit of the node owning the token is flipped. However,
   \* this node has to be the initiator.  Otherwise, the main safety
