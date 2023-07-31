@@ -51,9 +51,10 @@ VARIABLES
  inbox,
  clock,
  passes,
- enum
+ enum,
+ feature
   
-vars == <<active, color, counter, inbox, clock, passes, enum>>
+vars == <<active, color, counter, inbox, clock, passes, enum, feature>>
 
 terminated ==
     \A n \in Node :
@@ -104,6 +105,7 @@ Init ==
   \* this node has to be the initiator.  Otherwise, the main safety
   \* property of this algorithm is violated.
   /\ enum = [n \in Node |-> IF \E i \in 1..Len(inbox[n]): inbox[n][i].type = "tok" THEN FALSE ELSE TRUE]
+  /\ feature \in {"Orig", "Enum"}
 
 InitiateProbe(n) ==
   /\ n = Initiator
@@ -129,7 +131,7 @@ InitiateProbe(n) ==
   \* 6. enum.j := ~(enum.j)
   /\ enum' = [ enum EXCEPT ![n] = ~ @ ]
   \* The state of the nodes remains unchanged by token-related actions.
-  /\ UNCHANGED <<active, counter>>
+  /\ UNCHANGED <<active, counter, feature>>
   /\ passes' = IF passes >= 0 THEN passes + 1 ELSE passes
   
 PassToken(n) ==
@@ -153,7 +155,7 @@ PassToken(n) ==
   \* 6. enum.j := ~(enum.j)
   /\ enum' = [ enum EXCEPT ![n] = ~ @ ]
   \* The state of the nodes remains unchanged by token-related actions.
-  /\ UNCHANGED <<active, counter>>                            
+  /\ UNCHANGED <<active, counter, feature>>                            
   /\ passes' = IF passes >= 0 THEN passes + 1 ELSE passes
 
 System(n) == \/ InitiateProbe(n)
@@ -173,7 +175,7 @@ SendMsg(n) ==
           /\ inbox' = [inbox EXCEPT ![j] = Append(@, [type |-> "pl", src |-> n, vc |-> clock[n]', enum |-> enum[n] ] ) ]
           \* Note that we don't blacken node i as in EWD840 if node i
           \* sends a message to node j with j > i
-  /\ UNCHANGED <<active, color, passes, enum>>
+  /\ UNCHANGED <<active, color, passes, enum, feature>>
 
 \* RecvMsg could write the incoming message to a (Java) buffer from which the (Java) implementation consumes it. 
 RecvMsg(n) ==
@@ -185,16 +187,19 @@ RecvMsg(n) ==
   /\ \E j \in 1..Len(inbox[n]) : 
           /\ inbox[n][j].type = "pl"
           (* Rule 3 *)
-          /\ color' = [ color EXCEPT ![n] = IF enum[n] # inbox[n][j].enum THEN "black" ELSE @ ]
+          /\ color' =
+                IF "Enum" = feature 
+                THEN [ color EXCEPT ![n] = IF enum[n] # inbox[n][j].enum THEN "black" ELSE @ ]
+                ELSE [ color EXCEPT ![n] = "black" ]
           /\ inbox' = [inbox EXCEPT ![n] = RemoveAt(@, j) ]
           /\ clock' = [ clock EXCEPT ![n] = Merge(n, inbox[n][j].vc, @) ]
-  /\ UNCHANGED <<passes, enum>>
+  /\ UNCHANGED <<passes, enum, feature>>
 
 Deactivate(n) ==
   /\ active[n]
   /\ active' = [active EXCEPT ![n] = FALSE]
   /\ clock' = [ clock EXCEPT ![n][n] = @ + 1 ]
-  /\ UNCHANGED <<color, inbox, counter, enum>>
+  /\ UNCHANGED <<color, inbox, counter, enum, feature>>
   /\ passes' = IF terminated' THEN 0 ELSE passes
 
 Environment(n) == 
@@ -278,6 +283,6 @@ THEOREM Spec => EWD998Safe /\ EWD998Live
 
 \* The (vector) clock is not relevant for the correctness of the algorithm.
 View == 
-    <<active, color, counter, EWD998ChanInbox, passes, enum>>
+    <<active, color, counter, EWD998ChanInbox, passes, enum, feature>>
 
 =============================================================================
