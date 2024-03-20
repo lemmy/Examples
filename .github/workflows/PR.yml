@@ -1,0 +1,33 @@
+name: AI-linting of Specs
+
+on:
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  linting:
+    name: AI-linting of Specs
+
+    runs-on: ubuntu-latest
+
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_API_BASE: ${{ secrets.OPENAI_API_BASE }}
+      OPENAI_API_TYPE: ${{ secrets.OPENAI_API_TYPE }}
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Clone repo
+        uses: actions/checkout@v4
+
+      - name: Setup NodeJS
+        uses: actions/setup-node@v4
+        with:
+            node-version: "20"
+
+      - name: Run GenAIscript on the TLA+ specs added in this pull request
+        run: npx --yes genaiscript-cli run .github/scripts/TLA+FormulaNLCheck.genai.js $(git diff --name-only HEAD^ | grep '.tla')
