@@ -61,7 +61,7 @@ l:  while (TRUE) {
       } or { \* terminate the current node.
         active := FALSE
 
-      } or { \* pass the token to the next node.
+      } or { \* pass the token to some node.
         when self # Initiator;
         with (tok \in pendingMsgs(network, self)) {
             when tok.type = "tok" /\ ~active;
