@@ -144,6 +144,7 @@ token ==
     IN [pos |-> tpos, q |-> tok.q, color |-> tok.color]
 
 pending ==
+    \* EWD998!pending is the count of pending payload messages at a receiver node.
     [n \in Node |-> IF [type|->"pl"] \in DOMAIN network[n] THEN network[n][[type|->"pl"]] ELSE 0]
 
 EWD998 == INSTANCE EWD998
