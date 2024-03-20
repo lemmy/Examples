@@ -8,7 +8,7 @@
 EXTENDS Integers, Bags, BagsExt
 
 CONSTANT N
-ASSUME NAssumption == N \in Nat \ {0} \* At least one node.
+ASSUME NAssumption == N \in Nat \ {0} \* Any number of nodes between zero and infinitely many.
 
 Node == 0 .. N-1
 
