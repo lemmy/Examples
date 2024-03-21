@@ -3,7 +3,7 @@
 script({ title: "tlAI-Linter", description: "Check if the prose comments and their TLA+ declarations and definitions are syntactically and semantically consistent" })
 
 // use def to emit LLM variables
-def("TLA+", env.files.filter(f => f.filename.endsWith(".tla")))
+def("TLA+", env.files.filter(f => f.filename.endsWith(".tla")), {lineNumbers: true})
 
 // use $ to output formatted text to the prompt
 $`You are an expert at TLA+/TLAPLUS. Your task is to check if the prose comments and their TLA+ declarations and definitions are syntactically and semantically consistent!!!
