@@ -8,7 +8,7 @@
 EXTENDS Integers, Bags, BagsExt
 
 CONSTANT N
-ASSUME NAssumption == N \in Nat \ {0} \* At least one node.
+ASSUME NAssumption == N \in Nat \ {0} \* Any number of nodes between zero and infinitely many.
 
 Node == 0 .. N-1
 
@@ -61,7 +61,7 @@ l:  while (TRUE) {
       } or { \* terminate the current node.
         active := FALSE
 
-      } or { \* pass the token to the next node.
+      } or { \* pass the token to some node.
         when self # Initiator;
         with (tok \in pendingMsgs(network, self)) {
             when tok.type = "tok" /\ ~active;
