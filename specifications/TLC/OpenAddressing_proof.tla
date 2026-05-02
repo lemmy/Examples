@@ -1634,10 +1634,69 @@ LEMMA DupInvNext == Inv /\ DupInv /\ [Next]_vars => DupInv'
       \* set: table' = [table EXCEPT ![mod(ej+1, K)] = lo[self]].  See (b).
       OMITTED
     <2>4. CASE flush(self)
-      \* flush body negates a table cell (|.|-preserving) or is UNCHANGED;
-      \* flush-loop exit transitions to "rtrn" without changing table but
-      \* needs NoDupsTable to hold at sort+flush completion.  See (c).
-      OMITTED
+      \* Three sub-cases of flush:
+      \*   (A) ei[self] <= K+L, inner-then: `table[mod(ei,K)] := lo'[self]
+      \*       * (-1)' -- |table[.]| is preserved, so `NoDupsTable' survives
+      \*       unchanged.  The structural argument requires `pos ==
+      \*       mod(ei[self], K) \in 1..K', i.e. `ei[self] \in Int', which
+      \*       is not carried as a typing invariant in `Inv'/`DupInv'.
+      \*       OMITTED (deferred until we add an `EiType' invariant).
+      \*   (B) ei[self] <= K+L, inner-else: UNCHANGED table/newexternal
+      \*       (FULLY DISCHARGED below);
+      \*   (C) ei[self] >  K+L, outer-else: flush loop exits, pc'[self]
+      \*       becomes "rtrn" (in the third conjunct's trigger set).
+      \*       Discharging this requires `NoDupsTable' at pc=flush',
+      \*       which in turn requires carrying `NoDupsTable' through
+      \*       the insertion-sort body (a multiset-permutation
+      \*       invariant -- see doc-comment (b)/(c)).  OMITTED.
+      <3>. USE <2>4 DEF flush
+      <3>1. CASE ~(ei[self] <= K+L)
+        \* (C) outer-else.  See discussion above.
+        OMITTED
+      <3>2. CASE ei[self] <= K+L
+        <4>1. CASE ~( lo'[self] # empty
+                     /\ lo'[self] > largestElem(newexternal)
+                     /\ ((ei[self] <= K /\ ~wrapped(lo'[self], ei[self]))
+                         \/ (ei[self] >  K /\  wrapped(lo'[self], ei[self]))))
+          \* (B) inner-else: UNCHANGED table/newexternal, pc'[self] stays
+          \* "flush", evict unchanged.
+          <5>1. UNCHANGED <<table, newexternal>>
+            BY <3>2, <4>1
+          <5>2. table' = table
+            BY <5>1
+          <5>3. evict' = evict
+            OBVIOUS
+          <5>4. pc'[self] = "flush"
+            BY <3>2
+          <5>5. \A s2 \in ProcSet : s2 # self => pc'[s2] = pc[s2]
+            BY <3>2
+          <5>6. TableType'  BY <5>2
+          <5>7. FindOrPut' => NoDupsTable'
+            <6>. SUFFICES ASSUME FindOrPut'  PROVE NoDupsTable'
+              OBVIOUS
+            <6>1. FindOrPut  BY <5>3
+            <6>. QED  BY <5>2, <6>1
+          <5>8. \A s2 \in ProcSet :
+                  pc'[s2] \in {"rtrn", "endEv"} => NoDupsTable'
+            <6>. SUFFICES ASSUME NEW s2 \in ProcSet,
+                                  pc'[s2] \in {"rtrn", "endEv"}
+                          PROVE  NoDupsTable'
+              OBVIOUS
+            <6>1. CASE s2 = self
+              BY <5>4, <6>1
+            <6>2. CASE s2 # self
+              <7>1. pc'[s2] = pc[s2]  BY <5>5, <6>2
+              <7>. QED  BY <5>2, <7>1
+            <6>. QED  BY <6>1, <6>2
+          <5>. QED  BY <5>6, <5>7, <5>8
+        <4>2. CASE lo'[self] # empty
+                   /\ lo'[self] > largestElem(newexternal)
+                   /\ ((ei[self] <= K /\ ~wrapped(lo'[self], ei[self]))
+                       \/ (ei[self] >  K /\  wrapped(lo'[self], ei[self])))
+          \* (A) inner-then.  See discussion above.
+          OMITTED
+        <4>. QED  BY <4>1, <4>2
+      <3>. QED  BY <3>1, <3>2
     <2>5. CASE rtrn(self)
       \* rtrn: table UNCHANGED, evict UNCHANGED, pc'[self] = Head(stack[
       \* self]).pc.  By DupInv's third conjunct, NoDupsTable held pre,
@@ -1847,9 +1906,11 @@ LEMMA DupInvNext == Inv /\ DupInv /\ [Next]_vars => DupInv'
       <3>. QED  BY <3>2, <3>3, <3>4
     <2>10. CASE cas(self)
       \* The only writer disjunct that may mutate `table'.  Failed-CAS
-      \* leaves `table' UNCHANGED; successful-CAS writes `fp[self]' at
-      \* `idx(fp[self], index[self])' and is the central deep case --
-      \* see doc-comment (a).
+      \* leaves `table' UNCHANGED, but deciding which 2nd-IF branch the
+      \* action takes relies on knowing `result \in [Writer -> BOOLEAN]'
+      \* (a typing invariant not carried in `Inv').  Successful-CAS writes
+      \* `fp[self]' at `idx(fp[self], index[self])' and is the central
+      \* deep case -- see doc-comment (a).
       OMITTED
     <2>11. CASE tryEv(self)
       \* tryEv may flip `evict' to TRUE, in which case `FindOrPut'' is
