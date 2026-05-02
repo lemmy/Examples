@@ -1974,22 +1974,25 @@ LEMMA DupInvImpliesDuplicates == DupInv => Duplicates
 (* Main safety theorem: Spec implies []Duplicates.                         *)
 (*                                                                         *)
 (* `DupInv' is proved inductive in conjunction with the existing `Inv'    *)
-(* (we reuse `PcRangeOK' to discharge the `pc'[self]'-update obligations  *)
-(* in the inductive step).  The PTL chain therefore proves                *)
-(* `Spec => [](Inv /\ DupInv)'.                                           *)
+(* and the `StackOK' stack-shape invariant -- `InvNext' requires           *)
+(* `StackOK' to discharge the `rtrn' case -- so the PTL chain proves      *)
+(* `Spec => [](Inv /\ StackOK /\ DupInv)'.                                *)
 (***************************************************************************)
 THEOREM DuplicatesSafety == Spec => []Duplicates
-  <1>1. Spec => [](Inv /\ DupInv)
-    <2>1. Init => Inv /\ DupInv
-      BY InitInv, InitDupInv
-    <2>2. (Inv /\ DupInv) /\ [Next]_vars => (Inv /\ DupInv)'
-      <3>1. Inv /\ [Next]_vars => Inv'
+  <1>1. Spec => [](Inv /\ StackOK /\ DupInv)
+    <2>1. Init => Inv /\ StackOK /\ DupInv
+      BY InitInv, InitStackOK, InitDupInv
+    <2>2. (Inv /\ StackOK /\ DupInv) /\ [Next]_vars =>
+            (Inv /\ StackOK /\ DupInv)'
+      <3>1. Inv /\ StackOK /\ [Next]_vars => Inv'
         BY InvNext
-      <3>2. Inv /\ DupInv /\ [Next]_vars => DupInv'
+      <3>2. Inv /\ StackOK /\ [Next]_vars => StackOK'
+        BY StackOKInd
+      <3>3. Inv /\ DupInv /\ [Next]_vars => DupInv'
         BY DupInvNext
-      <3>. QED  BY <3>1, <3>2
+      <3>. QED  BY <3>1, <3>2, <3>3
     <2>. QED  BY <2>1, <2>2, PTL DEF Spec
-  <1>2. (Inv /\ DupInv) => Duplicates
+  <1>2. (Inv /\ StackOK /\ DupInv) => Duplicates
     BY DupInvImpliesDuplicates
   <1>. QED  BY <1>1, <1>2, PTL
 
