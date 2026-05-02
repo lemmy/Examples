@@ -1234,12 +1234,28 @@ LEMMA InitSortedInv == Init => SortedInv
 (*       external'    = newexternal \o subSeqLarger(external, newexternal).*)
 (*       Requires Concat + SelectSeq helpers.                              *)
 (*                                                                         *)
-(* The deep cases (b) and (c) reduce to the helper lemmas above plus an    *)
-(* invariant relating `lo'[self]' to a value in `fps' (which itself        *)
-(* depends on a `TableValues' invariant we do not carry here -- it would   *)
-(* belong to the `Duplicates'/`Consistent' proofs).  We therefore leave    *)
-(* the `inner-then' and `outer-else' branches as `OMITTED' inside this     *)
-(* proof, but write the full case dispatch so the structure is explicit.   *)
+(* Case (c) -- the `outer-else' -- is fully discharged here from the       *)
+(* generic SelectSeq / Concat / Append helper lemmas plus TLAPS'           *)
+(* `SequenceTheorems!ConcatProperties' and `LargestElemDef' /              *)
+(* `ElementOfSeq' to extract `largestElem(newexternal) = newexternal[Len]' *)
+(* as a bona fide integer.                                                 *)
+(*                                                                         *)
+(* Case (b) -- the `inner-then' -- remains OMITTED.  It would need         *)
+(* `lo'[self] \in fps', which decomposes into two TableType-style          *)
+(* strengthenings that are not currently carried by `SortedInv':           *)
+(*                                                                         *)
+(*   (i)  `table[mod(ei[self], K)] \in fps \cup NegFps \cup {empty}'       *)
+(*        (the classic `TableType' invariant, stated separately in the     *)
+(*        DupInv block below).  Combined with the CASE's `lo'[self] #      *)
+(*        empty' gives `lo'[self] \in fps \cup NegFps'.                    *)
+(*                                                                         *)
+(*   (ii) Positivity: `lo'[self] > largestElem(newexternal) >= 0',         *)
+(*        so `lo'[self] > 0' and hence (from (i)) `lo'[self] \in fps'.     *)
+(*                                                                         *)
+(* Discharging (b) therefore requires extending `SortedInv' (or            *)
+(* strengthening the inductive hypothesis of `SortedInvNext') with         *)
+(* `TableType' plus an auxiliary `lo[self] \in TableValues \cup {0}'       *)
+(* invariant -- a sizeable refactor we have not taken on here.             *)
 (***************************************************************************)
 LEMMA SortedInvNext == SortedInv /\ [Next]_vars => SortedInv'
   <1>. SUFFICES ASSUME SortedInv, [Next]_vars  PROVE SortedInv'
@@ -1281,9 +1297,93 @@ LEMMA SortedInvNext == SortedInv /\ [Next]_vars => SortedInv'
           <5>3. 1..(Len(newexternal') - 1) = {}  BY <5>2
           <5>. QED  BY <4>2, <5>1, <5>3
         <4>4. external' \in Seq(fps)  /\  StrAsc(external')
-          \* Requires concatenation + SelectSeq helpers and a join-bound
-          \* condition `largestElem(newexternal) < first(subSeqLarger(...))'.
-          OMITTED
+          \* Let `sl == subSeqLarger(external, newexternal)'.  Two cases:
+          \*
+          \*  - newexternal = <<>>: then `sl = external', so external' =
+          \*    <<>> \o external = external, which inherits Seq(fps) and
+          \*    StrAsc directly from SortedInv.
+          \*
+          \*  - newexternal # <<>>: then `sl = SelectSeq(external,
+          \*    LAMBDA p: p > largestElem(newexternal))'.  SelectSeqInSeqFps
+          \*    and SelectSeqPreservesStrAsc (both generic sequence lemmas)
+          \*    give `sl \in Seq(fps)' and `StrAsc(sl)'.  ConcatProperties
+          \*    (TLAPS standard) then gives external' \in Seq(fps).  For
+          \*    the strict-ascending property, if `sl = <<>>' we have
+          \*    external' = newexternal.  Otherwise
+          \*    `sl[1] > largestElem(newexternal) = newexternal[Len(newexternal)]'
+          \*    (SelectSeqStrictlyGreater + LargestElemDef), so ConcatStrAsc's
+          \*    boundary condition holds.
+          <5>. DEFINE sl == subSeqLarger(external, newexternal)
+          <5>0. external' = newexternal \o sl
+            BY <4>1
+          <5>a. fps \subseteq Int
+            <6>1. fps \subseteq Nat \ {0}  BY OAAssumption
+            <6>. QED  BY <6>1
+          <5>b. newexternal \in Seq(Int)
+            BY <5>a, SeqMonotonic
+          <5>1. CASE newexternal = <<>>
+            <6>1. sl = external
+              BY <5>1 DEF subSeqLarger
+            <6>2. external' = <<>> \o external
+              BY <5>0, <5>1, <6>1
+            <6>3. external' = external
+              BY <6>2, ConcatEmptySeq
+            <6>. QED  BY <6>3
+          <5>2. CASE newexternal # <<>>
+            <6>1. sl = SelectSeq(external, LAMBDA p : p > largestElem(newexternal))
+              BY <5>2 DEF subSeqLarger
+            <6>2. largestElem(newexternal) = newexternal[Len(newexternal)]
+              <7>1. largestElem(newexternal) =
+                      IF newexternal = <<>>
+                         THEN 0
+                         ELSE newexternal[Len(newexternal)]
+                BY LargestElemDef
+              <7>. QED  BY <5>2, <7>1
+            <6>3. newexternal # <<>> /\ Len(newexternal) \in Nat \ {0}
+              <7>1. Len(newexternal) \in Nat  BY LenProperties
+              <7>2. Len(newexternal) # 0  BY <5>2, EmptySeq
+              <7>. QED  BY <5>2, <7>1, <7>2
+            <6>4. Len(newexternal) \in 1..Len(newexternal)
+              BY <6>3
+            <6>5. newexternal[Len(newexternal)] \in fps
+              BY <6>4, ElementOfSeq
+            <6>6. largestElem(newexternal) \in Int
+              <7>1. newexternal[Len(newexternal)] \in Nat
+                BY <6>5, OAAssumption
+              <7>. QED  BY <6>2, <7>1
+            <6>7. sl \in Seq(fps)
+              BY <6>1, SelectSeqInSeqFps
+            <6>8. StrAsc(sl)
+              BY <6>1, SelectSeqPreservesStrAsc
+            <6>9. \A i \in 1..Len(sl) : sl[i] > largestElem(newexternal)
+              BY <6>1, <6>6, SelectSeqStrictlyGreater
+            <6>10. external' \in Seq(fps)
+              BY <5>0, <6>7, ConcatProperties
+            <6>11. StrAsc(external')
+              <7>1. CASE sl = <<>>
+                <8>1. external' = newexternal \o <<>>
+                  BY <5>0, <7>1
+                <8>2. external' = newexternal
+                  BY <8>1, ConcatEmptySeq
+                <8>. QED  BY <8>2
+              <7>2. CASE sl # <<>>
+                <8>1. Len(sl) \in Nat /\ Len(sl) # 0
+                  <9>1. Len(sl) \in Nat  BY <6>7, LenProperties
+                  <9>2. Len(sl) # 0  BY <6>7, <7>2, EmptySeq
+                  <9>. QED  BY <9>1, <9>2
+                <8>2. 1 \in 1..Len(sl)
+                  BY <8>1
+                <8>3. sl[1] > largestElem(newexternal)
+                  BY <6>9, <8>2
+                <8>4. newexternal[Len(newexternal)] < sl[1]
+                  BY <6>2, <6>6, <6>5, OAAssumption, <8>3
+                <8>5. sl \in Seq(Int)
+                  BY <5>a, <6>7, SeqMonotonic
+                <8>. QED
+                  BY <5>0, <5>b, <6>8, <8>4, <8>5, ConcatStrAsc
+              <7>. QED  BY <7>1, <7>2
+            <6>. QED  BY <6>10, <6>11
+          <5>. QED  BY <5>1, <5>2
         <4>. QED  BY <4>3, <4>4
       <3>2. CASE ei[self] <= K+L
         <4>1. external' = external
