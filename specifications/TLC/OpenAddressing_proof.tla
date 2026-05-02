@@ -309,6 +309,7 @@ LEMMA StackOKInd == Inv /\ StackOK /\ [Next]_vars => StackOK'
     BY DEF StackOK
   <1>00. ASSUME UNCHANGED vars
          PROVE  DOMAIN stack' = ProcSet
+    <2>. USE <1>00
     <2>1. stack' = stack  BY UnchangedVarsImpliesUnchangedStack
     <2>. QED  BY <1>0, <2>1
   <1>01. ASSUME NEW self \in ProcSet, Evict(self)
