@@ -1569,6 +1569,74 @@ LEMMA InitDupInv == Init => DupInv
   <1>. QED  BY <1>2, <1>3, <1>4 DEF DupInv
 
 (***************************************************************************)
+(* Typing invariant: `result' is a Boolean-valued function on `ProcSet'.   *)
+(*                                                                         *)
+(* Init sets `result = [self \in Writer |-> FALSE]' and every action       *)
+(* either leaves `result' UNCHANGED or writes a BOOLEAN at `self' via      *)
+(* EXCEPT.  We state this as a separate invariant (not folded into `Inv')  *)
+(* so that the existing `InvNext' proof is not perturbed; `DupInvNext'     *)
+(* below threads it as an extra hypothesis, which unlocks the failed-CAS   *)
+(* branch of `cas' (we need `result'[self] = FALSE' to identify the        *)
+(* second IF's branch).                                                    *)
+(***************************************************************************)
+ResultType == result \in [ProcSet -> BOOLEAN]
+
+LEMMA InitResultType == Init => ResultType
+  <1>. SUFFICES ASSUME Init  PROVE ResultType
+    OBVIOUS
+  <1>1. result = [self \in Writer |-> FALSE]
+    BY DEF Init
+  <1>. QED  BY <1>1, ProcSetIsWriter DEF ResultType
+
+LEMMA ResultTypeInd == ResultType /\ [Next]_vars => ResultType'
+  <1>. SUFFICES ASSUME ResultType, [Next]_vars  PROVE ResultType'
+    OBVIOUS
+  <1>1. CASE UNCHANGED vars
+    BY <1>1 DEF ResultType, vars
+  <1>2. ASSUME NEW self \in ProcSet, Evict(self)
+        PROVE  ResultType'
+    \* All Evict sub-actions UNCHANGED result.
+    <2>. USE <1>2 DEF Evict, strIns, nestedIns, set, flush, rtrn
+    <2>1. result' = result
+      OBVIOUS
+    <2>. QED  BY <2>1 DEF ResultType
+  <1>3. ASSUME NEW self \in Writer, p(self)
+        PROVE  ResultType'
+    <2>. USE <1>3, ProcSetIsWriter DEF p, ResultType
+    <2>1. CASE pick(self)    BY <2>1  DEF pick
+    <2>2. CASE put(self)
+      \* put writes FALSE at self.
+      <3>1. result' = [result EXCEPT ![self] = FALSE]
+        BY <2>2 DEF put
+      <3>. QED  BY <3>1
+    <2>3. CASE waitEv(self)  BY <2>3  DEF waitEv
+    <2>4. CASE endWEv(self)  BY <2>4  DEF endWEv
+    <2>5. CASE chkSnc(self)  BY <2>5  DEF chkSnc
+    <2>6. CASE cntns(self)   BY <2>6  DEF cntns
+    <2>7. CASE onSnc(self)   BY <2>7  DEF onSnc
+    <2>8. CASE isMth(self)   BY <2>8  DEF isMth
+    <2>9. CASE insrt(self)   BY <2>9  DEF insrt
+    <2>10. CASE cas(self)
+      \* cas writes TRUE or FALSE at self.
+      <3>1. CASE table[idx(fp[self],index[self])] = expected[self]
+        <4>1. result' = [result EXCEPT ![self] = TRUE]
+          BY <2>10, <3>1 DEF cas
+        <4>. QED  BY <4>1
+      <3>2. CASE ~(table[idx(fp[self],index[self])] = expected[self])
+        <4>1. result' = [result EXCEPT ![self] = FALSE]
+          BY <2>10, <3>2 DEF cas
+        <4>. QED  BY <4>1
+      <3>. QED  BY <3>1, <3>2
+    <2>11. CASE tryEv(self)   BY <2>11 DEF tryEv
+    <2>12. CASE waitIns(self) BY <2>12 DEF waitIns
+    <2>13. CASE endEv(self)   BY <2>13 DEF endEv
+    <2>. QED  BY <2>1, <2>2, <2>3, <2>4, <2>5, <2>6, <2>7,
+                  <2>8, <2>9, <2>10, <2>11, <2>12, <2>13
+  <1>4. CASE Terminating
+    BY <1>4 DEF Terminating, vars, ResultType
+  <1>. QED  BY <1>1, <1>2, <1>3, <1>4 DEF Next
+
+(***************************************************************************)
 (* Inductive step.                                                         *)
 (*                                                                         *)
 (* Most writer disjuncts leave `table' and `evict' UNCHANGED and move      *)
@@ -1576,8 +1644,9 @@ LEMMA InitDupInv == Init => DupInv
 (* discharged by routine case-by-case unfolding.  The two interesting      *)
 (* writer disjuncts are:                                                   *)
 (*                                                                         *)
-(*   - `cas': may modify `table' (success branch).  The success branch is  *)
-(*     OMITTED -- see (a) in the doc-comment above.                        *)
+(*   - `cas': may modify `table' (success branch).  The failed-CAS branch  *)
+(*     is discharged with the help of `ResultType'; the success branch    *)
+(*     is OMITTED -- see (a) in the doc-comment above.                     *)
 (*   - `endEv': flips `evict' from TRUE to FALSE.  Discharged via the      *)
 (*     post-flush pc invariant (third conjunct of DupInv).                 *)
 (*                                                                         *)
@@ -1585,11 +1654,11 @@ LEMMA InitDupInv == Init => DupInv
 (* UNCHANGED and are fully discharged.  `nestedIns' (THEN branch), `set',  *)
 (* and `flush' are OMITTED -- see (b)/(c).                                 *)
 (***************************************************************************)
-LEMMA DupInvNext == Inv /\ DupInv /\ [Next]_vars => DupInv'
-  <1>. SUFFICES ASSUME Inv, DupInv, [Next]_vars  PROVE DupInv'
+LEMMA DupInvNext == Inv /\ ResultType /\ DupInv /\ [Next]_vars => DupInv'
+  <1>. SUFFICES ASSUME Inv, ResultType, DupInv, [Next]_vars  PROVE DupInv'
     OBVIOUS
   <1>. USE DEF DupInv, TableType, NoDupsTable, FindOrPut, TableValues,
-              Inv, PcRangeOK, ProcSet
+              Inv, PcRangeOK, ProcSet, ResultType
   (***********************************************************************)
   (* Stutter.                                                              *)
   (***********************************************************************)
@@ -1905,13 +1974,55 @@ LEMMA DupInvNext == Inv /\ DupInv /\ [Next]_vars => DupInv'
         <4>. QED  BY <4>1, <4>2
       <3>. QED  BY <3>2, <3>3, <3>4
     <2>10. CASE cas(self)
-      \* The only writer disjunct that may mutate `table'.  Failed-CAS
-      \* leaves `table' UNCHANGED, but deciding which 2nd-IF branch the
-      \* action takes relies on knowing `result \in [Writer -> BOOLEAN]'
-      \* (a typing invariant not carried in `Inv').  Successful-CAS writes
-      \* `fp[self]' at `idx(fp[self], index[self])' and is the central
-      \* deep case -- see doc-comment (a).
-      OMITTED
+      \* The only writer disjunct that may mutate `table'.  Split on the
+      \* CAS compare: failed-CAS (the 1st-IF ELSE branch) leaves `table'
+      \* UNCHANGED and, using `ResultType' to determine that the 2nd-IF
+      \* fires its ELSE branch, yields `pc'[self] = "insrt"'.  The three
+      \* `DupInv' conjuncts all reduce to their pre-state counterparts.
+      \* Successful-CAS (1st-IF THEN) writes `fp[self]' at the probe slot
+      \* and is the deep case -- see doc-comment (a).
+      <3>. USE <2>10 DEF cas
+      <3>1. CASE ~(table[idx(fp[self],index[self])] = expected[self])
+        \* Failed CAS.
+        <4>1. table' = table
+          BY <3>1
+        <4>2. result' = [result EXCEPT ![self] = FALSE]
+          BY <3>1
+        <4>3. self \in DOMAIN result
+          BY ProcSetIsWriter
+        <4>4. result'[self] = FALSE
+          BY <4>2, <4>3
+        <4>5. pc'[self] = "insrt"
+          BY <4>4
+        <4>6. evict' = evict
+          OBVIOUS
+        <4>7. TableType'
+          BY <4>1
+        <4>8. FindOrPut' => NoDupsTable'
+          <5>. SUFFICES ASSUME FindOrPut'  PROVE NoDupsTable'
+            OBVIOUS
+          <5>1. FindOrPut  BY <4>6
+          <5>. QED  BY <4>1, <5>1
+        <4>9. \A s2 \in ProcSet :
+                pc'[s2] \in {"rtrn", "endEv"} => NoDupsTable'
+          <5>. SUFFICES ASSUME NEW s2 \in ProcSet,
+                                pc'[s2] \in {"rtrn", "endEv"}
+                        PROVE  NoDupsTable'
+            OBVIOUS
+          <5>1. CASE s2 = self
+            BY <4>5, <5>1
+          <5>2. CASE s2 # self
+            <6>1. pc'[s2] = pc[s2]  BY <4>4, <5>2
+            <6>. QED  BY <4>1, <6>1
+          <5>. QED  BY <5>1, <5>2
+        <4>. QED  BY <4>7, <4>8, <4>9
+      <3>2. CASE table[idx(fp[self],index[self])] = expected[self]
+        \* Successful CAS.  The new cell's `abs(fp[self])' must avoid
+        \* collision with any other non-empty cell -- the central
+        \* probe-sequence correctness invariant for open addressing.
+        \* That is the genuinely deep case left OMITTED here.
+        OMITTED
+      <3>. QED  BY <3>1, <3>2
     <2>11. CASE tryEv(self)
       \* tryEv may flip `evict' to TRUE, in which case `FindOrPut'' is
       \* FALSE and the second conjunct is vacuous.  Either way `table'
@@ -2034,26 +2145,28 @@ LEMMA DupInvImpliesDuplicates == DupInv => Duplicates
 (***************************************************************************)
 (* Main safety theorem: Spec implies []Duplicates.                         *)
 (*                                                                         *)
-(* `DupInv' is proved inductive in conjunction with the existing `Inv'    *)
-(* and the `StackOK' stack-shape invariant -- `InvNext' requires           *)
-(* `StackOK' to discharge the `rtrn' case -- so the PTL chain proves      *)
-(* `Spec => [](Inv /\ StackOK /\ DupInv)'.                                *)
+(* `DupInv' is proved inductive in conjunction with `Inv', `StackOK'       *)
+(* (required by `InvNext's `rtrn' case), and `ResultType' (required by    *)
+(* the failed-CAS branch of `DupInvNext'), so the PTL chain proves        *)
+(* `Spec => [](Inv /\ StackOK /\ ResultType /\ DupInv)'.                   *)
 (***************************************************************************)
 THEOREM DuplicatesSafety == Spec => []Duplicates
-  <1>1. Spec => [](Inv /\ StackOK /\ DupInv)
-    <2>1. Init => Inv /\ StackOK /\ DupInv
-      BY InitInv, InitStackOK, InitDupInv
-    <2>2. (Inv /\ StackOK /\ DupInv) /\ [Next]_vars =>
-            (Inv /\ StackOK /\ DupInv)'
+  <1>1. Spec => [](Inv /\ StackOK /\ ResultType /\ DupInv)
+    <2>1. Init => Inv /\ StackOK /\ ResultType /\ DupInv
+      BY InitInv, InitStackOK, InitResultType, InitDupInv
+    <2>2. (Inv /\ StackOK /\ ResultType /\ DupInv) /\ [Next]_vars =>
+            (Inv /\ StackOK /\ ResultType /\ DupInv)'
       <3>1. Inv /\ StackOK /\ [Next]_vars => Inv'
         BY InvNext
       <3>2. Inv /\ StackOK /\ [Next]_vars => StackOK'
         BY StackOKInd
-      <3>3. Inv /\ DupInv /\ [Next]_vars => DupInv'
+      <3>3. ResultType /\ [Next]_vars => ResultType'
+        BY ResultTypeInd
+      <3>4. Inv /\ ResultType /\ DupInv /\ [Next]_vars => DupInv'
         BY DupInvNext
-      <3>. QED  BY <3>1, <3>2, <3>3
+      <3>. QED  BY <3>1, <3>2, <3>3, <3>4
     <2>. QED  BY <2>1, <2>2, PTL DEF Spec
-  <1>2. (Inv /\ StackOK /\ DupInv) => Duplicates
+  <1>2. (Inv /\ StackOK /\ ResultType /\ DupInv) => Duplicates
     BY DupInvImpliesDuplicates
   <1>. QED  BY <1>1, <1>2, PTL
 
