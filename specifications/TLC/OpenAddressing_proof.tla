@@ -24,7 +24,16 @@
 (* have actually been observed in the `history' set.  It is implied by a   *)
 (* small inductive invariant `Inv' that we discharge in full.              *)
 (***************************************************************************)
-EXTENDS OpenAddressing, TLAPS, SequenceTheorems
+EXTENDS OpenAddressing, TLAPS, SequenceTheorems, FiniteSetTheorems
+
+(***************************************************************************)
+(* The sets `Writer' and `Reader' are concurrent-process identifiers; the  *)
+(* spec's `waitIns' precondition `waitCnt = Cardinality(Writer) - 1 +      *)
+(* Cardinality(Reader)' is meaningful only when both sets are finite.  We *)
+(* state this as a standing proof-level assumption.                        *)
+(***************************************************************************)
+ASSUME WriterFinite == IsFiniteSet(Writer)
+ASSUME ReaderFinite == IsFiniteSet(Reader)
 
 (***************************************************************************)
 (* The set of pc labels that appear in the spec.  The PlusCal translation  *)
@@ -1601,23 +1610,36 @@ LEMMA EjTypeInd ==
   <1>. QED  BY <1>1, <1>2, <1>3, <1>4 DEF Next
 
 (***************************************************************************)
+(* `WaitCntInv' (definition): the `waitCnt' variable counts exactly the    *)
+(* writers currently blocked at `waitEv' or `endWEv'.                      *)
+(*                                                                         *)
+(* The inductiveness proof (InitWaitCntInv, WaitCntInd) lives further      *)
+(* down, because it uses the same toolbox as the other invariants; but    *)
+(* the definitions need to be visible here because `EvictExclusiveInd'    *)
+(* takes `WaitCntInv' as a hypothesis to discharge the `waitIns' case.   *)
+(***************************************************************************)
+WaitSet == {s \in Writer : pc[s] \in {"waitEv", "endWEv"}}
+
+WaitCntInv ==
+  /\ waitCnt \in Nat
+  /\ waitCnt = Cardinality(WaitSet)
+
+(***************************************************************************)
 (* `EvictExclusive': at most one writer at a time is inside the "evictor   *)
-(* territory" `EvictLabels \cup {"endEv"}', and whenever any writer is     *)
-(* there, `evict = TRUE'.                                                  *)
+(* territory" `EvictLabels \cup {"endEv", "waitIns"}', and whenever any    *)
+(* writer is there, `evict = TRUE'.                                        *)
 (*                                                                         *)
 (* This is the standard mutual-exclusion invariant of the Evict            *)
 (* procedure.  It is used to discharge the third conjunct of `DupInv'      *)
 (* for the `nestedIns' THEN, `set', and `flush outer-else' actions (where  *)
 (* the question "is some other writer at `rtrn' or `endEv'?" arises).      *)
 (*                                                                         *)
-(* The invariant is inductive at every action except `waitIns', whose      *)
-(* precondition `waitCnt = Cardinality(Writer) - 1 + Cardinality(Reader)'  *)
-(* is supposed to pin down the count of other writers blocked at           *)
-(* `{"waitEv", "endWEv"}'.  Discharging the `waitIns' case would require   *)
-(* a standalone `WaitCntInv' linking `waitCnt' to that count; we leave     *)
-(* that one case OMITTED here as a single localised stub.                  *)
+(* "waitIns" is in the evictor territory because the only way to reach it  *)
+(* is via `tryEv' with pre-state `evict = FALSE', which sets `evict' =     *)
+(* TRUE' atomically.  Including "waitIns" makes the invariant inductive    *)
+(* at every action without an auxiliary invariant.                         *)
 (***************************************************************************)
-EvictUnion == EvictLabels \cup {"endEv"}
+EvictUnion == EvictLabels \cup {"endEv", "waitIns"}
 
 EvictExclusive ==
   /\ \A s1, s2 \in Writer :
@@ -1635,8 +1657,9 @@ LEMMA InitEvictExclusive == Init => EvictExclusive
   <1>. QED  BY <1>2 DEF EvictExclusive
 
 LEMMA EvictExclusiveInd ==
-  Inv /\ StackOK /\ EvictExclusive /\ [Next]_vars => EvictExclusive'
-  <1>. SUFFICES ASSUME Inv, StackOK, EvictExclusive, [Next]_vars
+  Inv /\ StackOK /\ WaitCntInv /\ EvictExclusive /\ [Next]_vars
+     => EvictExclusive'
+  <1>. SUFFICES ASSUME Inv, StackOK, WaitCntInv, EvictExclusive, [Next]_vars
                 PROVE  EvictExclusive'
     OBVIOUS
   <1>. USE DEF EvictExclusive, EvictUnion, EvictLabels, WriterLabels,
@@ -1786,19 +1809,26 @@ LEMMA EvictExclusiveInd ==
       <3>6. evict' = evict  OBVIOUS
       <3>. QED  BY <3>2, <3>4, <3>5, <3>6
     <2>11. CASE tryEv(self)
-      \* tryEv may flip `evict' from FALSE to TRUE, but `pc'[self]' goes
-      \* to "waitIns" or "put", neither of which is in EvictUnion.  The
-      \* `evict = TRUE' conjunct is strengthened (never weakened).
+      \* tryEv splits on `evict':
+      \*   THEN (evict = FALSE pre): evict' = TRUE, pc'[self] = "waitIns"
+      \*        \in EvictUnion.  No other writer is in EvictUnion pre-state
+      \*        (by EvictExclusive: pc[s] \in EvictUnion => evict = TRUE,
+      \*        contradicting evict = FALSE).
+      \*   ELSE (evict = TRUE pre): pc'[self] = "put" \notin EvictUnion;
+      \*        others unchanged; `evict' = TRUE' unchanged.
       <3>. USE <2>11 DEF tryEv
-      <3>1. pc'[self] \in {"waitIns", "put"}  OBVIOUS
-      <3>2. pc'[self] \notin EvictUnion  BY <3>1
       <3>3. pc[self] = "tryEv"  OBVIOUS
       <3>4. pc[self] \notin EvictUnion  BY <3>3
       <3>5. \A s2 \in Writer : s2 # self => pc'[s2] = pc[s2]  OBVIOUS
-      \* evict' \in {TRUE, evict}: either strengthened or unchanged.
-      <3>6. evict' = TRUE \/ evict' = evict  OBVIOUS
-      <3>. QED
-        <4>1. \A s1, s2 \in Writer :
+      <3>A. CASE evict = FALSE
+        <4>. USE <3>A
+        <4>1. evict' = TRUE  OBVIOUS
+        <4>2. pc'[self] = "waitIns"  OBVIOUS
+        <4>3. \A s2 \in Writer : pc[s2] \notin EvictUnion
+          BY <3>A
+        <4>4. \A s2 \in Writer : s2 # self => pc'[s2] \notin EvictUnion
+          BY <3>5, <4>3
+        <4>5. \A s1, s2 \in Writer :
                 (pc'[s1] \in EvictUnion /\ pc'[s2] \in EvictUnion)
                 => s1 = s2
           <5>. SUFFICES ASSUME NEW s1 \in Writer, NEW s2 \in Writer,
@@ -1806,32 +1836,87 @@ LEMMA EvictExclusiveInd ==
                                 pc'[s2] \in EvictUnion
                         PROVE  s1 = s2
             OBVIOUS
-          <5>1. s1 # self  BY <3>2
-          <5>2. s2 # self  BY <3>2
-          <5>3. pc'[s1] = pc[s1]  BY <3>5, <5>1
-          <5>4. pc'[s2] = pc[s2]  BY <3>5, <5>2
-          <5>5. pc[s1] \in EvictUnion  BY <5>3
-          <5>6. pc[s2] \in EvictUnion  BY <5>4
-          <5>. QED  BY <5>5, <5>6
-        <4>2. \A s \in Writer : pc'[s] \in EvictUnion => evict' = TRUE
+          <5>1. s1 = self  BY <4>4
+          <5>2. s2 = self  BY <4>4
+          <5>. QED  BY <5>1, <5>2
+        <4>6. \A s \in Writer : pc'[s] \in EvictUnion => evict' = TRUE
+          BY <4>1
+        <4>. QED  BY <4>5, <4>6
+      <3>B. CASE evict = TRUE
+        <4>. USE <3>B
+        <4>1. evict' = evict  OBVIOUS
+        <4>2. pc'[self] = "put"  OBVIOUS
+        <4>3. pc'[self] \notin EvictUnion  BY <4>2
+        <4>4. \A s1, s2 \in Writer :
+                (pc'[s1] \in EvictUnion /\ pc'[s2] \in EvictUnion)
+                => s1 = s2
+          <5>. SUFFICES ASSUME NEW s1 \in Writer, NEW s2 \in Writer,
+                                pc'[s1] \in EvictUnion,
+                                pc'[s2] \in EvictUnion
+                        PROVE  s1 = s2
+            OBVIOUS
+          <5>1. s1 # self  BY <4>3
+          <5>2. s2 # self  BY <4>3
+          <5>3. pc[s1] \in EvictUnion  BY <3>5, <5>1
+          <5>4. pc[s2] \in EvictUnion  BY <3>5, <5>2
+          <5>. QED  BY <5>3, <5>4
+        <4>5. \A s \in Writer : pc'[s] \in EvictUnion => evict' = TRUE
           <5>. SUFFICES ASSUME NEW s \in Writer, pc'[s] \in EvictUnion
                         PROVE  evict' = TRUE
             OBVIOUS
-          <5>1. s # self  BY <3>2
-          <5>2. pc'[s] = pc[s]  BY <3>5, <5>1
-          <5>3. pc[s] \in EvictUnion  BY <5>2
-          <5>4. evict = TRUE  BY <5>3
-          <5>. QED  BY <5>4, <3>6
-        <4>. QED  BY <4>1, <4>2
+          <5>1. s # self  BY <4>3
+          <5>2. pc[s] \in EvictUnion  BY <3>5, <5>1
+          <5>. QED  BY <4>1, <5>2
+        <4>. QED  BY <4>4, <4>5
+      <3>. QED  BY <3>A, <3>B
     <2>12. CASE waitIns(self)
-      \* waitIns transitions pc[self] from "waitIns" to "strIns" (enters
-      \* EvictUnion).  Preservation requires that no OTHER process is
-      \* in EvictUnion pre-state.  This follows from the waitCnt
-      \* precondition `waitCnt = Cardinality(Writer) - 1 + Cardinality(Reader)',
-      \* combined with a WaitCntInv linking `waitCnt' to
-      \* `|{s \in Writer : pc[s] \in {"waitEv", "endWEv"}}|'.  We do not
-      \* formalise WaitCntInv here and leave this one case OMITTED.
-      OMITTED
+      \* waitIns transitions pc[self] from "waitIns" (now in EvictUnion)
+      \* to "strIns" (in EvictUnion).  Since "waitIns" is in EvictUnion
+      \* pre-state, by `EvictExclusive':
+      \*   - self is the UNIQUE writer with pc[s] \in EvictUnion (mutex);
+      \*   - evict = TRUE (evict conjunct).
+      \* Both are inherited directly to the post-state.
+      <3>. USE <2>12 DEF waitIns
+      <3>1. pc[self] = "waitIns"  OBVIOUS
+      <3>2. pc[self] \in EvictUnion  BY <3>1
+      <3>3. pc'[self] = "strIns"  OBVIOUS
+      <3>4. pc'[self] \in EvictUnion  BY <3>3
+      <3>5. \A s2 \in Writer : s2 # self => pc'[s2] = pc[s2]  OBVIOUS
+      <3>6. evict' = evict  OBVIOUS
+      <3>7. evict = TRUE  BY <3>2
+      <3>8. evict' = TRUE  BY <3>6, <3>7
+      <3>9. \A s2 \in Writer : s2 # self => pc[s2] \notin EvictUnion
+        <4>. SUFFICES ASSUME NEW s2 \in Writer, s2 # self
+                      PROVE  pc[s2] \notin EvictUnion
+          OBVIOUS
+        <4>1. SUFFICES ASSUME pc[s2] \in EvictUnion  PROVE FALSE
+          OBVIOUS
+        <4>2. s2 = self  BY <3>2, <4>1
+        <4>. QED  BY <4>2
+      <3>10. \A s \in Writer : pc'[s] \in EvictUnion => evict' = TRUE
+        BY <3>8
+      <3>11. \A s1, s2 \in Writer :
+                (pc'[s1] \in EvictUnion /\ pc'[s2] \in EvictUnion)
+                => s1 = s2
+        <4>. SUFFICES ASSUME NEW s1 \in Writer, NEW s2 \in Writer,
+                              pc'[s1] \in EvictUnion,
+                              pc'[s2] \in EvictUnion
+                      PROVE  s1 = s2
+          OBVIOUS
+        <4>1. \A s \in Writer :
+                s # self /\ pc'[s] \in EvictUnion => FALSE
+          <5>. SUFFICES ASSUME NEW s \in Writer, s # self,
+                                pc'[s] \in EvictUnion
+                        PROVE  FALSE
+            OBVIOUS
+          <5>1. pc'[s] = pc[s]  BY <3>5
+          <5>2. pc[s] \in EvictUnion  BY <5>1
+          <5>3. pc[s] \notin EvictUnion  BY <3>9
+          <5>. QED  BY <5>2, <5>3
+        <4>2. s1 = self  BY <4>1
+        <4>3. s2 = self  BY <4>1
+        <4>. QED  BY <4>2, <4>3
+      <3>. QED  BY <3>10, <3>11
     <2>13. CASE endEv(self)
       \* endEv transitions pc[self] from "endEv" (in EvictUnion) to "put"
       \* (not in EvictUnion); evict' = FALSE.  By EvictExclusive pre,
@@ -1863,6 +1948,402 @@ LEMMA EvictExclusiveInd ==
           <5>. QED  BY <5>1, <5>2
         <4>. QED  BY <4>1, <4>2
       <3>. QED  BY <3>7
+    <2>. QED  BY <2>1, <2>2, <2>3, <2>4, <2>5, <2>6, <2>7,
+                  <2>8, <2>9, <2>10, <2>11, <2>12, <2>13
+  <1>4. CASE Terminating
+    BY <1>4 DEF Terminating, vars
+  <1>. QED  BY <1>1, <1>2, <1>3, <1>4 DEF Next
+
+(***************************************************************************)
+(* `WaitCntInv' (lemmas).  The definitions of `WaitSet' and `WaitCntInv'   *)
+(* live further up (they are needed by `EvictExclusiveInd').               *)
+(***************************************************************************)
+LEMMA WaitSetFinite == IsFiniteSet(WaitSet)
+  <1>1. WaitSet \in SUBSET Writer
+    BY DEF WaitSet
+  <1>. QED  BY <1>1, WriterFinite, FS_Subset
+
+LEMMA InitWaitCntInv == Init => WaitCntInv
+  <1>. SUFFICES ASSUME Init  PROVE WaitCntInv
+    OBVIOUS
+  <1>1. waitCnt = 0  BY DEF Init
+  <1>2. \A s \in Writer : pc[s] = "pick"
+    BY ProcSetIsWriter DEF Init, ProcSet
+  <1>3. WaitSet = {}
+    BY <1>2 DEF WaitSet
+  <1>4. Cardinality(WaitSet) = 0
+    BY <1>3, FS_EmptySet
+  <1>. QED  BY <1>1, <1>4 DEF WaitCntInv
+
+LEMMA WaitCntInd ==
+  Inv /\ StackOK /\ WaitCntInv /\ [Next]_vars => WaitCntInv'
+  <1>. SUFFICES ASSUME Inv, StackOK, WaitCntInv, [Next]_vars
+                PROVE  WaitCntInv'
+    OBVIOUS
+  <1>. USE DEF WaitCntInv, WaitSet, Inv, PcRangeOK, PcRange,
+              StackOK, EvictLabels, WriterLabels, ProcSet
+  <1>. USE WaitSetFinite DEF WaitSet
+  \* Facts used repeatedly: the pre-state WaitSet is finite, so
+  \* add/remove lemmas apply, and Cardinality(WaitSet) \in Nat.
+  <1>Card. Cardinality(WaitSet) \in Nat
+    BY WaitSetFinite, FS_CardinalityType DEF WaitSet
+  <1>1. CASE UNCHANGED vars
+    \* waitCnt, pc unchanged -> WaitSet and waitCnt unchanged.
+    BY <1>1 DEF vars
+  <1>2. ASSUME NEW self \in ProcSet, Evict(self)
+        PROVE  WaitCntInv'
+    \* Evict-procedure actions keep self's pc in EvictLabels (rtrn moves
+    \* to "endEv", still outside {"waitEv","endWEv"}).  waitCnt is
+    \* UNCHANGED across all five Evict actions.  WaitSet is unchanged
+    \* because only self's pc could change, and self is not in
+    \* {"waitEv","endWEv"} pre or post.
+    <2>. USE <1>2, ProcSetIsWriter DEF Evict
+    <2>1. waitCnt' = waitCnt
+      <3>1. CASE strIns(self)   BY <3>1 DEF strIns
+      <3>2. CASE nestedIns(self) BY <3>2 DEF nestedIns
+      <3>3. CASE set(self)       BY <3>3 DEF set
+      <3>4. CASE flush(self)     BY <3>4 DEF flush
+      <3>5. CASE rtrn(self)      BY <3>5 DEF rtrn
+      <3>. QED  BY <3>1, <3>2, <3>3, <3>4, <3>5
+    <2>2. pc[self] \in EvictLabels
+      <3>1. CASE strIns(self)   BY <3>1 DEF strIns
+      <3>2. CASE nestedIns(self) BY <3>2 DEF nestedIns
+      <3>3. CASE set(self)       BY <3>3 DEF set
+      <3>4. CASE flush(self)     BY <3>4 DEF flush
+      <3>5. CASE rtrn(self)      BY <3>5 DEF rtrn
+      <3>. QED  BY <3>1, <3>2, <3>3, <3>4, <3>5
+    <2>4. pc'[self] \notin {"waitEv", "endWEv"}
+      <3>1. CASE strIns(self)    BY <3>1 DEF strIns
+      <3>2. CASE nestedIns(self) BY <3>2 DEF nestedIns
+      <3>3. CASE set(self)       BY <3>3 DEF set
+      <3>4. CASE flush(self)     BY <3>4 DEF flush
+      <3>5. CASE rtrn(self)
+        <4>. USE <3>5 DEF rtrn
+        <4>1. pc[self] = "rtrn"  OBVIOUS
+        <4>2. pc[self] \in EvictLabels  BY <4>1
+        <4>3. stack[self] # <<>>  BY <4>2
+        <4>4. Head(stack[self]).pc = "endEv"  BY <4>2
+        <4>5. pc'[self] = "endEv"  BY <4>4
+        <4>. QED  BY <4>5
+      <3>. QED  BY <3>1, <3>2, <3>3, <3>4, <3>5
+    <2>5. pc[self] \notin {"waitEv", "endWEv"}
+      BY <2>2
+    <2>6. \A s2 \in Writer : s2 # self => pc'[s2] = pc[s2]
+      <3>1. CASE strIns(self)    BY <3>1 DEF strIns
+      <3>2. CASE nestedIns(self) BY <3>2 DEF nestedIns
+      <3>3. CASE set(self)       BY <3>3 DEF set
+      <3>4. CASE flush(self)     BY <3>4 DEF flush
+      <3>5. CASE rtrn(self)      BY <3>5 DEF rtrn
+      <3>. QED  BY <3>1, <3>2, <3>3, <3>4, <3>5
+    <2>7. WaitSet' = WaitSet
+      <3>. SUFFICES ASSUME NEW s \in Writer
+                    PROVE  (pc'[s] \in {"waitEv", "endWEv"}) <=>
+                            (pc[s] \in {"waitEv", "endWEv"})
+        BY DEF WaitSet
+      <3>1. CASE s = self
+        BY <3>1, <2>4, <2>5
+      <3>2. CASE s # self
+        <4>1. pc'[s] = pc[s]  BY <2>6, <3>2
+        <4>. QED  BY <4>1
+      <3>. QED  BY <3>1, <3>2
+    <2>. QED  BY <2>1, <2>7, <1>Card
+  <1>3. ASSUME NEW self \in Writer, p(self)
+        PROVE  WaitCntInv'
+    <2>. USE <1>3, ProcSetIsWriter DEF p
+    <2>1. CASE pick(self)
+      \* pc[self] "pick" -> "put"/"Done"; waitCnt UNCHANGED; no self
+      \* enters/exits WaitSet.
+      <3>. USE <2>1 DEF pick
+      <3>1. waitCnt' = waitCnt  OBVIOUS
+      <3>2. pc[self] = "pick"  OBVIOUS
+      <3>3. pc[self] \notin {"waitEv", "endWEv"}  BY <3>2
+      <3>4. pc'[self] \in {"put", "Done"}  OBVIOUS
+      <3>5. pc'[self] \notin {"waitEv", "endWEv"}  BY <3>4
+      <3>6. \A s \in Writer : s # self => pc'[s] = pc[s]  OBVIOUS
+      <3>7. WaitSet' = WaitSet
+        <4>. SUFFICES ASSUME NEW s \in Writer
+                      PROVE  (pc'[s] \in {"waitEv", "endWEv"}) <=>
+                              (pc[s] \in {"waitEv", "endWEv"})
+          BY DEF WaitSet
+        <4>1. CASE s = self  BY <4>1, <3>3, <3>5
+        <4>2. CASE s # self  BY <4>2, <3>6
+        <4>. QED  BY <4>1, <4>2
+      <3>. QED  BY <3>1, <3>7, <1>Card
+    <2>2. CASE put(self)
+      \* Two sub-cases: (i) evict=TRUE, pc "put"->"waitEv", waitCnt+=1,
+      \* self enters WaitSet; (ii) evict=FALSE, pc "put"->"chkSnc",
+      \* waitCnt UNCHANGED, WaitSet UNCHANGED.
+      <3>. USE <2>2 DEF put
+      <3>1. pc[self] = "put"  OBVIOUS
+      <3>2. self \notin WaitSet
+        BY <3>1 DEF WaitSet
+      <3>3. \A s \in Writer : s # self => pc'[s] = pc[s]  OBVIOUS
+      <3>4. CASE evict
+        <4>1. pc'[self] = "waitEv"  BY <3>4
+        <4>2. waitCnt' = waitCnt + 1  BY <3>4
+        <4>3. WaitSet' = WaitSet \cup {self}
+          <5>. SUFFICES ASSUME NEW s \in Writer
+                        PROVE  (pc'[s] \in {"waitEv", "endWEv"}) <=>
+                                (s = self \/ pc[s] \in {"waitEv", "endWEv"})
+            BY <3>2 DEF WaitSet
+          <5>1. CASE s = self
+            BY <5>1, <4>1, <3>1
+          <5>2. CASE s # self
+            <6>1. pc'[s] = pc[s]  BY <3>3, <5>2
+            <6>. QED  BY <5>2, <6>1
+          <5>. QED  BY <5>1, <5>2
+        <4>4. Cardinality(WaitSet') = Cardinality(WaitSet) + 1
+          BY <4>3, <3>2, WaitSetFinite, FS_AddElement
+        <4>. QED  BY <4>2, <4>4, <1>Card
+      <3>5. CASE ~evict
+        <4>1. pc'[self] = "chkSnc"  BY <3>5
+        <4>2. waitCnt' = waitCnt  BY <3>5
+        <4>3. WaitSet' = WaitSet
+          <5>. SUFFICES ASSUME NEW s \in Writer
+                        PROVE  (pc'[s] \in {"waitEv", "endWEv"}) <=>
+                                (pc[s] \in {"waitEv", "endWEv"})
+            BY DEF WaitSet
+          <5>1. CASE s = self
+            <6>1. pc'[self] \notin {"waitEv", "endWEv"}  BY <4>1
+            <6>2. pc[self] \notin {"waitEv", "endWEv"}   BY <3>1
+            <6>. QED  BY <5>1, <6>1, <6>2
+          <5>2. CASE s # self
+            <6>1. pc'[s] = pc[s]  BY <3>3, <5>2
+            <6>. QED  BY <6>1
+          <5>. QED  BY <5>1, <5>2
+        <4>. QED  BY <4>2, <4>3, <1>Card
+      <3>. QED  BY <3>4, <3>5
+    <2>3. CASE waitEv(self)
+      \* pc "waitEv" -> "endWEv"; waitCnt UNCHANGED; self stays in WaitSet.
+      <3>. USE <2>3 DEF waitEv
+      <3>1. waitCnt' = waitCnt  OBVIOUS
+      <3>2. pc[self] = "waitEv"  OBVIOUS
+      <3>3. pc'[self] = "endWEv"  OBVIOUS
+      <3>4. self \in WaitSet
+        BY <3>2 DEF WaitSet
+      <3>5. \A s \in Writer : s # self => pc'[s] = pc[s]  OBVIOUS
+      <3>6. WaitSet' = WaitSet
+        <4>. SUFFICES ASSUME NEW s \in Writer
+                      PROVE  (pc'[s] \in {"waitEv", "endWEv"}) <=>
+                              (pc[s] \in {"waitEv", "endWEv"})
+          BY DEF WaitSet
+        <4>1. CASE s = self
+          BY <4>1, <3>2, <3>3
+        <4>2. CASE s # self
+          <5>1. pc'[s] = pc[s]  BY <3>5, <4>2
+          <5>. QED  BY <5>1
+        <4>. QED  BY <4>1, <4>2
+      <3>. QED  BY <3>1, <3>6, <1>Card
+    <2>4. CASE endWEv(self)
+      \* pc "endWEv" -> "put"; waitCnt-=1; self leaves WaitSet.
+      <3>. USE <2>4 DEF endWEv
+      <3>1. waitCnt' = waitCnt - 1  OBVIOUS
+      <3>2. pc[self] = "endWEv"  OBVIOUS
+      <3>3. pc'[self] = "put"  OBVIOUS
+      <3>4. self \in WaitSet
+        BY <3>2 DEF WaitSet
+      <3>5. \A s \in Writer : s # self => pc'[s] = pc[s]  OBVIOUS
+      <3>6. WaitSet' = WaitSet \ {self}
+        <4>. SUFFICES ASSUME NEW s \in Writer
+                      PROVE  (pc'[s] \in {"waitEv", "endWEv"}) <=>
+                              (s # self /\ pc[s] \in {"waitEv", "endWEv"})
+          BY DEF WaitSet
+        <4>1. CASE s = self
+          <5>1. pc'[self] \notin {"waitEv", "endWEv"}  BY <3>3
+          <5>. QED  BY <4>1, <5>1
+        <4>2. CASE s # self
+          <5>1. pc'[s] = pc[s]  BY <3>5, <4>2
+          <5>. QED  BY <4>2, <5>1
+        <4>. QED  BY <4>1, <4>2
+      <3>7. Cardinality(WaitSet') = Cardinality(WaitSet) - 1
+        BY <3>6, <3>4, WaitSetFinite, FS_RemoveElement
+      <3>8. Cardinality(WaitSet) \in Nat \ {0}
+        <4>1. {self} \subseteq WaitSet  BY <3>4
+        <4>2. Cardinality({self}) = 1  BY FS_Singleton
+        <4>3. Cardinality({self}) <= Cardinality(WaitSet)
+          BY <4>1, WaitSetFinite, FS_Subset
+        <4>. QED  BY <4>2, <4>3, <1>Card
+      <3>. QED  BY <3>1, <3>7, <3>8
+    <2>5. CASE chkSnc(self)
+      <3>. USE <2>5 DEF chkSnc
+      <3>1. waitCnt' = waitCnt  OBVIOUS
+      <3>2. pc[self] = "chkSnc"  OBVIOUS
+      <3>3. pc'[self] \in {"cntns", "insrt"}  OBVIOUS
+      <3>4. \A s \in Writer : s # self => pc'[s] = pc[s]  OBVIOUS
+      <3>5. WaitSet' = WaitSet
+        <4>. SUFFICES ASSUME NEW s \in Writer
+                      PROVE  (pc'[s] \in {"waitEv", "endWEv"}) <=>
+                              (pc[s] \in {"waitEv", "endWEv"})
+          BY DEF WaitSet
+        <4>1. CASE s = self
+          <5>1. pc'[self] \notin {"waitEv", "endWEv"}  BY <3>3
+          <5>2. pc[self] \notin {"waitEv", "endWEv"}   BY <3>2
+          <5>. QED  BY <4>1, <5>1, <5>2
+        <4>2. CASE s # self
+          <5>1. pc'[s] = pc[s]  BY <3>4, <4>2
+          <5>. QED  BY <5>1
+        <4>. QED  BY <4>1, <4>2
+      <3>. QED  BY <3>1, <3>5, <1>Card
+    <2>6. CASE cntns(self)
+      <3>. USE <2>6 DEF cntns
+      <3>1. waitCnt' = waitCnt  OBVIOUS
+      <3>2. pc[self] = "cntns"  OBVIOUS
+      <3>3. pc'[self] \in {"pick", "onSnc", "cntns"}  OBVIOUS
+      <3>4. \A s \in Writer : s # self => pc'[s] = pc[s]  OBVIOUS
+      <3>5. WaitSet' = WaitSet
+        <4>. SUFFICES ASSUME NEW s \in Writer
+                      PROVE  (pc'[s] \in {"waitEv", "endWEv"}) <=>
+                              (pc[s] \in {"waitEv", "endWEv"})
+          BY DEF WaitSet
+        <4>1. CASE s = self
+          <5>1. pc'[self] \notin {"waitEv", "endWEv"}  BY <3>3
+          <5>2. pc[self] \notin {"waitEv", "endWEv"}   BY <3>2
+          <5>. QED  BY <4>1, <5>1, <5>2
+        <4>2. CASE s # self
+          <5>1. pc'[s] = pc[s]  BY <3>4, <4>2
+          <5>. QED  BY <5>1
+        <4>. QED  BY <4>1, <4>2
+      <3>. QED  BY <3>1, <3>5, <1>Card
+    <2>7. CASE onSnc(self)
+      <3>. USE <2>7 DEF onSnc
+      <3>1. waitCnt' = waitCnt  OBVIOUS
+      <3>2. pc[self] = "onSnc"  OBVIOUS
+      <3>3. pc'[self] \in {"pick", "insrt"}  OBVIOUS
+      <3>4. \A s \in Writer : s # self => pc'[s] = pc[s]  OBVIOUS
+      <3>5. WaitSet' = WaitSet
+        <4>. SUFFICES ASSUME NEW s \in Writer
+                      PROVE  (pc'[s] \in {"waitEv", "endWEv"}) <=>
+                              (pc[s] \in {"waitEv", "endWEv"})
+          BY DEF WaitSet
+        <4>1. CASE s = self
+          <5>1. pc'[self] \notin {"waitEv", "endWEv"}  BY <3>3
+          <5>2. pc[self] \notin {"waitEv", "endWEv"}   BY <3>2
+          <5>. QED  BY <4>1, <5>1, <5>2
+        <4>2. CASE s # self
+          <5>1. pc'[s] = pc[s]  BY <3>4, <4>2
+          <5>. QED  BY <5>1
+        <4>. QED  BY <4>1, <4>2
+      <3>. QED  BY <3>1, <3>5, <1>Card
+    <2>8. CASE insrt(self)
+      <3>. USE <2>8 DEF insrt
+      <3>1. waitCnt' = waitCnt  OBVIOUS
+      <3>2. pc[self] = "insrt"  OBVIOUS
+      <3>3. pc'[self] \in {"cas", "isMth", "tryEv"}  OBVIOUS
+      <3>4. \A s \in Writer : s # self => pc'[s] = pc[s]  OBVIOUS
+      <3>5. WaitSet' = WaitSet
+        <4>. SUFFICES ASSUME NEW s \in Writer
+                      PROVE  (pc'[s] \in {"waitEv", "endWEv"}) <=>
+                              (pc[s] \in {"waitEv", "endWEv"})
+          BY DEF WaitSet
+        <4>1. CASE s = self
+          <5>1. pc'[self] \notin {"waitEv", "endWEv"}  BY <3>3
+          <5>2. pc[self] \notin {"waitEv", "endWEv"}   BY <3>2
+          <5>. QED  BY <4>1, <5>1, <5>2
+        <4>2. CASE s # self
+          <5>1. pc'[s] = pc[s]  BY <3>4, <4>2
+          <5>. QED  BY <5>1
+        <4>. QED  BY <4>1, <4>2
+      <3>. QED  BY <3>1, <3>5, <1>Card
+    <2>9. CASE isMth(self)
+      <3>. USE <2>9 DEF isMth
+      <3>1. waitCnt' = waitCnt  OBVIOUS
+      <3>2. pc[self] = "isMth"  OBVIOUS
+      <3>3. pc'[self] \in {"pick", "insrt"}  OBVIOUS
+      <3>4. \A s \in Writer : s # self => pc'[s] = pc[s]  OBVIOUS
+      <3>5. WaitSet' = WaitSet
+        <4>. SUFFICES ASSUME NEW s \in Writer
+                      PROVE  (pc'[s] \in {"waitEv", "endWEv"}) <=>
+                              (pc[s] \in {"waitEv", "endWEv"})
+          BY DEF WaitSet
+        <4>1. CASE s = self
+          <5>1. pc'[self] \notin {"waitEv", "endWEv"}  BY <3>3
+          <5>2. pc[self] \notin {"waitEv", "endWEv"}   BY <3>2
+          <5>. QED  BY <4>1, <5>1, <5>2
+        <4>2. CASE s # self
+          <5>1. pc'[s] = pc[s]  BY <3>4, <4>2
+          <5>. QED  BY <5>1
+        <4>. QED  BY <4>1, <4>2
+      <3>. QED  BY <3>1, <3>5, <1>Card
+    <2>10. CASE cas(self)
+      <3>. USE <2>10 DEF cas
+      <3>1. waitCnt' = waitCnt  OBVIOUS
+      <3>2. pc[self] = "cas"  OBVIOUS
+      <3>3. pc'[self] \in {"pick", "insrt"}  OBVIOUS
+      <3>4. \A s \in Writer : s # self => pc'[s] = pc[s]  OBVIOUS
+      <3>5. WaitSet' = WaitSet
+        <4>. SUFFICES ASSUME NEW s \in Writer
+                      PROVE  (pc'[s] \in {"waitEv", "endWEv"}) <=>
+                              (pc[s] \in {"waitEv", "endWEv"})
+          BY DEF WaitSet
+        <4>1. CASE s = self
+          <5>1. pc'[self] \notin {"waitEv", "endWEv"}  BY <3>3
+          <5>2. pc[self] \notin {"waitEv", "endWEv"}   BY <3>2
+          <5>. QED  BY <4>1, <5>1, <5>2
+        <4>2. CASE s # self
+          <5>1. pc'[s] = pc[s]  BY <3>4, <4>2
+          <5>. QED  BY <5>1
+        <4>. QED  BY <4>1, <4>2
+      <3>. QED  BY <3>1, <3>5, <1>Card
+    <2>11. CASE tryEv(self)
+      <3>. USE <2>11 DEF tryEv
+      <3>1. waitCnt' = waitCnt  OBVIOUS
+      <3>2. pc[self] = "tryEv"  OBVIOUS
+      <3>3. pc'[self] \in {"waitIns", "put"}  OBVIOUS
+      <3>4. \A s \in Writer : s # self => pc'[s] = pc[s]  OBVIOUS
+      <3>5. WaitSet' = WaitSet
+        <4>. SUFFICES ASSUME NEW s \in Writer
+                      PROVE  (pc'[s] \in {"waitEv", "endWEv"}) <=>
+                              (pc[s] \in {"waitEv", "endWEv"})
+          BY DEF WaitSet
+        <4>1. CASE s = self
+          <5>1. pc'[self] \notin {"waitEv", "endWEv"}  BY <3>3
+          <5>2. pc[self] \notin {"waitEv", "endWEv"}   BY <3>2
+          <5>. QED  BY <4>1, <5>1, <5>2
+        <4>2. CASE s # self
+          <5>1. pc'[s] = pc[s]  BY <3>4, <4>2
+          <5>. QED  BY <5>1
+        <4>. QED  BY <4>1, <4>2
+      <3>. QED  BY <3>1, <3>5, <1>Card
+    <2>12. CASE waitIns(self)
+      <3>. USE <2>12 DEF waitIns
+      <3>1. waitCnt' = waitCnt  OBVIOUS
+      <3>2. pc[self] = "waitIns"  OBVIOUS
+      <3>3. pc'[self] = "strIns"  OBVIOUS
+      <3>4. \A s \in Writer : s # self => pc'[s] = pc[s]  OBVIOUS
+      <3>5. WaitSet' = WaitSet
+        <4>. SUFFICES ASSUME NEW s \in Writer
+                      PROVE  (pc'[s] \in {"waitEv", "endWEv"}) <=>
+                              (pc[s] \in {"waitEv", "endWEv"})
+          BY DEF WaitSet
+        <4>1. CASE s = self
+          <5>1. pc'[self] \notin {"waitEv", "endWEv"}  BY <3>3
+          <5>2. pc[self] \notin {"waitEv", "endWEv"}   BY <3>2
+          <5>. QED  BY <4>1, <5>1, <5>2
+        <4>2. CASE s # self
+          <5>1. pc'[s] = pc[s]  BY <3>4, <4>2
+          <5>. QED  BY <5>1
+        <4>. QED  BY <4>1, <4>2
+      <3>. QED  BY <3>1, <3>5, <1>Card
+    <2>13. CASE endEv(self)
+      <3>. USE <2>13 DEF endEv
+      <3>1. waitCnt' = waitCnt  OBVIOUS
+      <3>2. pc[self] = "endEv"  OBVIOUS
+      <3>3. pc'[self] = "put"  OBVIOUS
+      <3>4. \A s \in Writer : s # self => pc'[s] = pc[s]  OBVIOUS
+      <3>5. WaitSet' = WaitSet
+        <4>. SUFFICES ASSUME NEW s \in Writer
+                      PROVE  (pc'[s] \in {"waitEv", "endWEv"}) <=>
+                              (pc[s] \in {"waitEv", "endWEv"})
+          BY DEF WaitSet
+        <4>1. CASE s = self
+          <5>1. pc'[self] \notin {"waitEv", "endWEv"}  BY <3>3
+          <5>2. pc[self] \notin {"waitEv", "endWEv"}   BY <3>2
+          <5>. QED  BY <4>1, <5>1, <5>2
+        <4>2. CASE s # self
+          <5>1. pc'[s] = pc[s]  BY <3>4, <4>2
+          <5>. QED  BY <5>1
+        <4>. QED  BY <4>1, <4>2
+      <3>. QED  BY <3>1, <3>5, <1>Card
     <2>. QED  BY <2>1, <2>2, <2>3, <2>4, <2>5, <2>6, <2>7,
                   <2>8, <2>9, <2>10, <2>11, <2>12, <2>13
   <1>4. CASE Terminating
@@ -2964,15 +3445,16 @@ LEMMA DupInvImpliesDuplicates == DupInv => Duplicates
 (***************************************************************************)
 THEOREM DuplicatesSafety == Spec => []Duplicates
   <1>1. Spec => [](Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
-                   /\ LoType /\ EvictExclusive /\ DupInv)
+                   /\ LoType /\ WaitCntInv /\ EvictExclusive /\ DupInv)
     <2>1. Init => Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
-                    /\ LoType /\ EvictExclusive /\ DupInv
+                    /\ LoType /\ WaitCntInv /\ EvictExclusive /\ DupInv
       BY InitInv, InitStackOK, InitResultType, InitEiType, InitEjType,
-         InitLoType, InitEvictExclusive, InitDupInv
+         InitLoType, InitWaitCntInv, InitEvictExclusive, InitDupInv
     <2>2. (Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
-             /\ LoType /\ EvictExclusive /\ DupInv) /\ [Next]_vars
+             /\ LoType /\ WaitCntInv /\ EvictExclusive /\ DupInv)
+             /\ [Next]_vars
             => (Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
-                  /\ LoType /\ EvictExclusive /\ DupInv)'
+                  /\ LoType /\ WaitCntInv /\ EvictExclusive /\ DupInv)'
       <3>1. Inv /\ StackOK /\ [Next]_vars => Inv'
         BY InvNext
       <3>2. Inv /\ StackOK /\ [Next]_vars => StackOK'
@@ -2986,15 +3468,19 @@ THEOREM DuplicatesSafety == Spec => []Duplicates
       <3>6. Inv /\ StackOK /\ EiType /\ DupInv /\ LoType /\ [Next]_vars
               => LoType'
         BY LoTypeInd
-      <3>7. Inv /\ StackOK /\ EvictExclusive /\ [Next]_vars => EvictExclusive'
+      <3>7. Inv /\ StackOK /\ WaitCntInv /\ [Next]_vars => WaitCntInv'
+        BY WaitCntInd
+      <3>8. Inv /\ StackOK /\ WaitCntInv /\ EvictExclusive /\ [Next]_vars
+              => EvictExclusive'
         BY EvictExclusiveInd
-      <3>8. Inv /\ ResultType /\ EiType /\ EjType /\ LoType
+      <3>9. Inv /\ ResultType /\ EiType /\ EjType /\ LoType
               /\ EvictExclusive /\ DupInv /\ [Next]_vars => DupInv'
         BY DupInvNext
-      <3>. QED  BY <3>1, <3>2, <3>3, <3>4, <3>5, <3>6, <3>7, <3>8
+      <3>. QED  BY <3>1, <3>2, <3>3, <3>4, <3>5, <3>6, <3>7, <3>8, <3>9
     <2>. QED  BY <2>1, <2>2, PTL DEF Spec
   <1>2. (Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
-           /\ LoType /\ EvictExclusive /\ DupInv) => Duplicates
+           /\ LoType /\ WaitCntInv /\ EvictExclusive /\ DupInv)
+          => Duplicates
     BY DupInvImpliesDuplicates
   <1>. QED  BY <1>1, <1>2, PTL
 
@@ -3809,16 +4295,21 @@ THEOREM SortedSafety == Spec => []Sorted
   \* flush outer-else, cas successful), but that dependency is no worse
   \* than the OMITTED that previously lived directly in `SortedInvNext'.
   <1>1. Spec => [](Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
-                   /\ LoType /\ EvictExclusive /\ DupInv /\ SortedInv)
+                   /\ LoType /\ WaitCntInv /\ EvictExclusive
+                   /\ DupInv /\ SortedInv)
     <2>1. Init => Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
-                    /\ LoType /\ EvictExclusive /\ DupInv /\ SortedInv
+                    /\ LoType /\ WaitCntInv /\ EvictExclusive
+                    /\ DupInv /\ SortedInv
       BY InitInv, InitStackOK, InitResultType, InitEiType, InitEjType,
-         InitLoType, InitEvictExclusive, InitDupInv, InitSortedInv
+         InitLoType, InitWaitCntInv, InitEvictExclusive, InitDupInv,
+         InitSortedInv
     <2>2. (Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
-             /\ LoType /\ EvictExclusive /\ DupInv /\ SortedInv)
+             /\ LoType /\ WaitCntInv /\ EvictExclusive
+             /\ DupInv /\ SortedInv)
             /\ [Next]_vars
           => (Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
-                /\ LoType /\ EvictExclusive /\ DupInv /\ SortedInv)'
+                /\ LoType /\ WaitCntInv /\ EvictExclusive
+                /\ DupInv /\ SortedInv)'
       <3>1. Inv /\ StackOK /\ [Next]_vars => Inv'
         BY InvNext
       <3>2. Inv /\ StackOK /\ [Next]_vars => StackOK'
@@ -3832,14 +4323,18 @@ THEOREM SortedSafety == Spec => []Sorted
       <3>6. Inv /\ StackOK /\ EiType /\ DupInv /\ LoType /\ [Next]_vars
               => LoType'
         BY LoTypeInd
-      <3>7. Inv /\ StackOK /\ EvictExclusive /\ [Next]_vars => EvictExclusive'
+      <3>7. Inv /\ StackOK /\ WaitCntInv /\ [Next]_vars => WaitCntInv'
+        BY WaitCntInd
+      <3>8. Inv /\ StackOK /\ WaitCntInv /\ EvictExclusive /\ [Next]_vars
+              => EvictExclusive'
         BY EvictExclusiveInd
-      <3>8. Inv /\ ResultType /\ EiType /\ EjType /\ LoType
+      <3>9. Inv /\ ResultType /\ EiType /\ EjType /\ LoType
               /\ EvictExclusive /\ DupInv /\ [Next]_vars => DupInv'
         BY DupInvNext
-      <3>9. EiType /\ DupInv /\ SortedInv /\ [Next]_vars => SortedInv'
+      <3>10. EiType /\ DupInv /\ SortedInv /\ [Next]_vars => SortedInv'
         BY SortedInvNext
-      <3>. QED  BY <3>1, <3>2, <3>3, <3>4, <3>5, <3>6, <3>7, <3>8, <3>9
+      <3>. QED  BY <3>1, <3>2, <3>3, <3>4, <3>5, <3>6, <3>7, <3>8,
+                    <3>9, <3>10
     <2>. QED  BY <2>1, <2>2, PTL DEF Spec
   <1>2. SortedInv => Sorted
     BY SortedInvImpliesSorted
