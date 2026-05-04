@@ -1441,6 +1441,435 @@ LEMMA EiTypeInd == StackOK /\ EiType /\ [Next]_vars => EiType'
   <1>. QED  BY <1>1, <1>2, <1>3, <1>4 DEF Next
 
 (***************************************************************************)
+(* `EjType': `ej[self] \in Int' (can go negative through nestedIns'        *)
+(* decrement), together with a stack-frame constraint mirroring `EiType'.  *)
+(*                                                                         *)
+(* Used to discharge `mod(ej[self], K) \in 1..K' when reasoning about the  *)
+(* THEN branch of `nestedIns' and about `set'.                             *)
+(***************************************************************************)
+EjType ==
+  /\ ej \in [ProcSet -> Int]
+  /\ \A self \in ProcSet :
+        stack[self] # <<>> => Head(stack[self]).ej \in Int
+
+LEMMA InitEjType == Init => EjType
+  <1>. SUFFICES ASSUME Init  PROVE EjType
+    OBVIOUS
+  <1>1. ej = [self \in ProcSet |-> 1]
+    BY DEF Init
+  <1>2. ej \in [ProcSet -> Int]
+    BY <1>1 DEF EjType
+  <1>3. \A self \in ProcSet : stack[self] = <<>>
+    BY DEF Init
+  <1>. QED  BY <1>2, <1>3 DEF EjType
+
+LEMMA EjTypeInd ==
+  StackOK /\ EiType /\ EjType /\ [Next]_vars => EjType'
+  <1>. SUFFICES ASSUME StackOK, EiType, EjType, [Next]_vars
+                PROVE  EjType'
+    OBVIOUS
+  <1>. USE DEF EjType, EiType, StackOK, EvictLabels, WriterLabels, ProcSet
+  <1>1. CASE UNCHANGED vars
+    BY <1>1 DEF vars
+  <1>2. ASSUME NEW self \in ProcSet, Evict(self)
+        PROVE  EjType'
+    <2>. USE <1>2 DEF Evict
+    <2>1. CASE strIns(self)
+      BY <2>1 DEF strIns
+    <2>2. CASE nestedIns(self)
+      \* THEN: ej' = [ej EXCEPT ![self] = ej[self] - 1]; ELSE: UNCHANGED ej.
+      <3>. USE <2>2 DEF nestedIns
+      <3>1. stack' = stack  OBVIOUS
+      <3>2. CASE compare(lo[self], mod(ei[self] + 1, K),
+                          table[mod(ej[self], K)], mod(ej[self], K)) <= -1
+        <4>1. ej'[self] = ej[self] - 1  BY <3>2
+        <4>2. ej[self] \in Int  OBVIOUS
+        <4>3. ej'[self] \in Int  BY <4>1, <4>2
+        <4>4. \A s2 \in ProcSet : s2 # self => ej'[s2] = ej[s2]
+          BY <3>2
+        <4>. QED  BY <3>1, <4>3, <4>4
+      <3>3. CASE ~(compare(lo[self], mod(ei[self] + 1, K),
+                            table[mod(ej[self], K)], mod(ej[self], K)) <= -1)
+        <4>1. UNCHANGED ej  BY <3>3
+        <4>. QED  BY <3>1, <4>1
+      <3>. QED  BY <3>2, <3>3
+    <2>3. CASE set(self)
+      \* ej' = [ej EXCEPT ![self] = ei[self] + 1]; stack UNCHANGED.
+      <3>. USE <2>3 DEF set
+      <3>1. stack' = stack  OBVIOUS
+      <3>2. ej'[self] = ei[self] + 1
+        OBVIOUS
+      <3>3. ei[self] \in Nat
+        OBVIOUS
+      <3>4. ej'[self] \in Int
+        BY <3>2, <3>3
+      <3>5. \A s2 \in ProcSet : s2 # self => ej'[s2] = ej[s2]
+        OBVIOUS
+      <3>6. ej' \in [ProcSet -> Int]
+        BY <3>4, <3>5
+      <3>. QED  BY <3>1, <3>6
+    <2>4. CASE flush(self)
+      BY <2>4 DEF flush
+    <2>5. CASE rtrn(self)
+      \* Pops stack; ej'[self] = Head(stack[self]).ej.
+      <3>. USE <2>5 DEF rtrn
+      <3>1. pc[self] = "rtrn"  OBVIOUS
+      <3>2. pc[self] \in EvictLabels  BY <3>1
+      <3>3. stack[self] # <<>>  BY <3>2
+      <3>4. Head(stack[self]).ej \in Int  BY <3>3
+      <3>5. ej'[self] = Head(stack[self]).ej  OBVIOUS
+      <3>6. ej'[self] \in Int  BY <3>4, <3>5
+      <3>7. \A s2 \in ProcSet : s2 # self => ej'[s2] = ej[s2]
+        OBVIOUS
+      <3>8. ej' \in [ProcSet -> Int]
+        BY <3>6, <3>7
+      \* Post-state stack: empty at self, unchanged at others.
+      <3>9. stack'[self] = Tail(stack[self])
+        OBVIOUS
+      <3>10. Tail(stack[self]) = <<>>
+        BY <3>2
+      <3>11. stack'[self] = <<>>
+        BY <3>9, <3>10
+      <3>12. \A s2 \in ProcSet :
+                stack'[s2] # <<>> => Head(stack'[s2]).ej \in Int
+        <4>. SUFFICES ASSUME NEW s2 \in ProcSet, stack'[s2] # <<>>
+                      PROVE  Head(stack'[s2]).ej \in Int
+          OBVIOUS
+        <4>1. CASE s2 = self
+          BY <3>11, <4>1
+        <4>2. CASE s2 # self
+          <5>1. stack'[s2] = stack[s2]
+            BY <4>2
+          <5>. QED  BY <5>1
+        <4>. QED  BY <4>1, <4>2
+      <3>. QED  BY <3>8, <3>12
+    <2>. QED  BY <2>1, <2>2, <2>3, <2>4, <2>5
+  <1>3. ASSUME NEW self \in Writer, p(self)
+        PROVE  EjType'
+    <2>. USE <1>3, ProcSetIsWriter DEF p
+    <2>1. CASE pick(self)      BY <2>1 DEF pick
+    <2>2. CASE put(self)       BY <2>2 DEF put
+    <2>3. CASE waitEv(self)    BY <2>3 DEF waitEv
+    <2>4. CASE endWEv(self)    BY <2>4 DEF endWEv
+    <2>5. CASE chkSnc(self)    BY <2>5 DEF chkSnc
+    <2>6. CASE cntns(self)     BY <2>6 DEF cntns
+    <2>7. CASE onSnc(self)     BY <2>7 DEF onSnc
+    <2>8. CASE isMth(self)     BY <2>8 DEF isMth
+    <2>9. CASE insrt(self)     BY <2>9 DEF insrt
+    <2>10. CASE cas(self)      BY <2>10 DEF cas
+    <2>11. CASE tryEv(self)    BY <2>11 DEF tryEv
+    <2>12. CASE waitIns(self)
+      \* Pushes frame with .ej = ej[self], then ej' = [ej EXCEPT ![self] = 1].
+      <3>. USE <2>12 DEF waitIns
+      <3>1. ej'[self] = 1
+        OBVIOUS
+      <3>2. \A s2 \in ProcSet : s2 # self => ej'[s2] = ej[s2]
+        OBVIOUS
+      <3>3. ej' \in [ProcSet -> Int]
+        BY <3>1, <3>2
+      <3>4. ej[self] \in Int
+        OBVIOUS
+      <3>5. stack'[self] =
+              <<[procedure |-> "Evict", pc |-> "endEv",
+                 ei |-> ei[self], ej |-> ej[self], lo |-> lo[self]]>>
+              \o stack[self]
+        OBVIOUS
+      <3>6. Head(stack'[self]).ej = ej[self]
+        BY <3>5
+      <3>7. Head(stack'[self]).ej \in Int
+        BY <3>4, <3>6
+      <3>8. \A s2 \in ProcSet : s2 # self => stack'[s2] = stack[s2]
+        OBVIOUS
+      <3>9. \A s2 \in ProcSet :
+                stack'[s2] # <<>> => Head(stack'[s2]).ej \in Int
+        <4>. SUFFICES ASSUME NEW s2 \in ProcSet, stack'[s2] # <<>>
+                      PROVE  Head(stack'[s2]).ej \in Int
+          OBVIOUS
+        <4>1. CASE s2 = self
+          BY <3>7, <4>1
+        <4>2. CASE s2 # self
+          <5>1. stack'[s2] = stack[s2]
+            BY <3>8, <4>2
+          <5>. QED  BY <5>1
+        <4>. QED  BY <4>1, <4>2
+      <3>. QED  BY <3>3, <3>9
+    <2>13. CASE endEv(self)    BY <2>13 DEF endEv
+    <2>. QED  BY <2>1, <2>2, <2>3, <2>4, <2>5, <2>6, <2>7,
+                  <2>8, <2>9, <2>10, <2>11, <2>12, <2>13
+  <1>4. CASE Terminating
+    BY <1>4 DEF Terminating, vars
+  <1>. QED  BY <1>1, <1>2, <1>3, <1>4 DEF Next
+
+(***************************************************************************)
+(* `EvictExclusive': at most one writer at a time is inside the "evictor   *)
+(* territory" `EvictLabels \cup {"endEv"}', and whenever any writer is     *)
+(* there, `evict = TRUE'.                                                  *)
+(*                                                                         *)
+(* This is the standard mutual-exclusion invariant of the Evict            *)
+(* procedure.  It is used to discharge the third conjunct of `DupInv'      *)
+(* for the `nestedIns' THEN, `set', and `flush outer-else' actions (where  *)
+(* the question "is some other writer at `rtrn' or `endEv'?" arises).      *)
+(*                                                                         *)
+(* The invariant is inductive at every action except `waitIns', whose      *)
+(* precondition `waitCnt = Cardinality(Writer) - 1 + Cardinality(Reader)'  *)
+(* is supposed to pin down the count of other writers blocked at           *)
+(* `{"waitEv", "endWEv"}'.  Discharging the `waitIns' case would require   *)
+(* a standalone `WaitCntInv' linking `waitCnt' to that count; we leave     *)
+(* that one case OMITTED here as a single localised stub.                  *)
+(***************************************************************************)
+EvictUnion == EvictLabels \cup {"endEv"}
+
+EvictExclusive ==
+  /\ \A s1, s2 \in Writer :
+       (pc[s1] \in EvictUnion /\ pc[s2] \in EvictUnion) => s1 = s2
+  /\ \A s \in Writer :
+       pc[s] \in EvictUnion => evict = TRUE
+
+LEMMA InitEvictExclusive == Init => EvictExclusive
+  <1>. SUFFICES ASSUME Init  PROVE EvictExclusive
+    OBVIOUS
+  <1>1. \A s \in Writer : pc[s] = "pick"
+    BY ProcSetIsWriter DEF Init, ProcSet
+  <1>2. \A s \in Writer : pc[s] \notin EvictUnion
+    BY <1>1 DEF EvictUnion, EvictLabels
+  <1>. QED  BY <1>2 DEF EvictExclusive
+
+LEMMA EvictExclusiveInd ==
+  Inv /\ StackOK /\ EvictExclusive /\ [Next]_vars => EvictExclusive'
+  <1>. SUFFICES ASSUME Inv, StackOK, EvictExclusive, [Next]_vars
+                PROVE  EvictExclusive'
+    OBVIOUS
+  <1>. USE DEF EvictExclusive, EvictUnion, EvictLabels, WriterLabels,
+              ProcSet, StackOK, Inv, PcRangeOK, PcRange
+  <1>1. CASE UNCHANGED vars
+    BY <1>1 DEF vars
+  <1>2. ASSUME NEW self \in ProcSet, Evict(self)
+        PROVE  EvictExclusive'
+    \* Every Evict-procedure action keeps pc[self] in EvictLabels (rtrn
+    \* transitions into "endEv" which is still in EvictUnion).  No other
+    \* process's pc changes, and `evict' is unchanged across all Evict
+    \* actions.  Hence the mutex and the `evict = TRUE' conjunct are
+    \* preserved.
+    <2>. USE <1>2, ProcSetIsWriter DEF Evict
+    <2>1. CASE strIns(self)
+      <3>. USE <2>1 DEF strIns
+      <3>1. pc[self] \in EvictLabels  OBVIOUS
+      <3>2. pc'[self] \in EvictLabels  OBVIOUS
+      <3>3. \A s2 \in Writer : s2 # self => pc'[s2] = pc[s2]  OBVIOUS
+      <3>4. evict' = evict  OBVIOUS
+      <3>. QED  BY <3>1, <3>2, <3>3, <3>4
+    <2>2. CASE nestedIns(self)
+      <3>. USE <2>2 DEF nestedIns
+      <3>1. pc[self] \in EvictLabels  OBVIOUS
+      <3>2. pc'[self] \in EvictLabels  OBVIOUS
+      <3>3. \A s2 \in Writer : s2 # self => pc'[s2] = pc[s2]  OBVIOUS
+      <3>4. evict' = evict  OBVIOUS
+      <3>. QED  BY <3>1, <3>2, <3>3, <3>4
+    <2>3. CASE set(self)
+      <3>. USE <2>3 DEF set
+      <3>1. pc[self] \in EvictLabels  OBVIOUS
+      <3>2. pc'[self] \in EvictLabels  OBVIOUS
+      <3>3. \A s2 \in Writer : s2 # self => pc'[s2] = pc[s2]  OBVIOUS
+      <3>4. evict' = evict  OBVIOUS
+      <3>. QED  BY <3>1, <3>2, <3>3, <3>4
+    <2>4. CASE flush(self)
+      <3>. USE <2>4 DEF flush
+      <3>1. pc[self] \in EvictLabels  OBVIOUS
+      <3>2. pc'[self] \in EvictLabels  OBVIOUS
+      <3>3. \A s2 \in Writer : s2 # self => pc'[s2] = pc[s2]  OBVIOUS
+      <3>4. evict' = evict  OBVIOUS
+      <3>. QED  BY <3>1, <3>2, <3>3, <3>4
+    <2>5. CASE rtrn(self)
+      \* "rtrn" -> "endEv", still in EvictUnion.
+      <3>. USE <2>5 DEF rtrn
+      <3>1. pc[self] = "rtrn"  OBVIOUS
+      <3>2. pc[self] \in EvictUnion  BY <3>1
+      <3>3. stack[self] # <<>>  BY <3>1
+      <3>4. Head(stack[self]).pc = "endEv"  BY <3>3
+      <3>5. pc'[self] = "endEv"  BY <3>4
+      <3>6. pc'[self] \in EvictUnion  BY <3>5
+      <3>7. \A s2 \in Writer : s2 # self => pc'[s2] = pc[s2]  OBVIOUS
+      <3>8. evict' = evict  OBVIOUS
+      <3>. QED  BY <3>2, <3>6, <3>7, <3>8
+    <2>. QED  BY <2>1, <2>2, <2>3, <2>4, <2>5
+  <1>3. ASSUME NEW self \in Writer, p(self)
+        PROVE  EvictExclusive'
+    <2>. USE <1>3, ProcSetIsWriter DEF p
+    <2>1. CASE pick(self)
+      <3>. USE <2>1 DEF pick
+      <3>1. pc[self] = "pick"  OBVIOUS
+      <3>2. pc[self] \notin EvictUnion  BY <3>1
+      <3>3. pc'[self] \in {"put", "Done"}  OBVIOUS
+      <3>4. pc'[self] \notin EvictUnion  BY <3>3
+      <3>5. \A s2 \in Writer : s2 # self => pc'[s2] = pc[s2]  OBVIOUS
+      <3>6. evict' = evict  OBVIOUS
+      <3>. QED  BY <3>2, <3>4, <3>5, <3>6
+    <2>2. CASE put(self)
+      <3>. USE <2>2 DEF put
+      <3>1. pc[self] = "put"  OBVIOUS
+      <3>2. pc[self] \notin EvictUnion  BY <3>1
+      <3>3. pc'[self] \in {"waitEv", "chkSnc"}  OBVIOUS
+      <3>4. pc'[self] \notin EvictUnion  BY <3>3
+      <3>5. \A s2 \in Writer : s2 # self => pc'[s2] = pc[s2]  OBVIOUS
+      <3>6. evict' = evict  OBVIOUS
+      <3>. QED  BY <3>2, <3>4, <3>5, <3>6
+    <2>3. CASE waitEv(self)
+      <3>. USE <2>3 DEF waitEv
+      <3>1. pc'[self] = "endWEv"  OBVIOUS
+      <3>2. pc'[self] \notin EvictUnion  BY <3>1
+      <3>3. pc[self] = "waitEv"  OBVIOUS
+      <3>4. pc[self] \notin EvictUnion  BY <3>3
+      <3>5. \A s2 \in Writer : s2 # self => pc'[s2] = pc[s2]  OBVIOUS
+      <3>6. evict' = evict  OBVIOUS
+      <3>. QED  BY <3>2, <3>4, <3>5, <3>6
+    <2>4. CASE endWEv(self)
+      <3>. USE <2>4 DEF endWEv
+      <3>1. pc'[self] = "put"  OBVIOUS
+      <3>2. pc'[self] \notin EvictUnion  BY <3>1
+      <3>3. pc[self] = "endWEv"  OBVIOUS
+      <3>4. pc[self] \notin EvictUnion  BY <3>3
+      <3>5. \A s2 \in Writer : s2 # self => pc'[s2] = pc[s2]  OBVIOUS
+      <3>6. evict' = evict  OBVIOUS
+      <3>. QED  BY <3>2, <3>4, <3>5, <3>6
+    <2>5. CASE chkSnc(self)
+      <3>. USE <2>5 DEF chkSnc
+      <3>1. pc'[self] \in {"cntns", "insrt"}  OBVIOUS
+      <3>2. pc'[self] \notin EvictUnion  BY <3>1
+      <3>3. pc[self] = "chkSnc"  OBVIOUS
+      <3>4. pc[self] \notin EvictUnion  BY <3>3
+      <3>5. \A s2 \in Writer : s2 # self => pc'[s2] = pc[s2]  OBVIOUS
+      <3>6. evict' = evict  OBVIOUS
+      <3>. QED  BY <3>2, <3>4, <3>5, <3>6
+    <2>6. CASE cntns(self)
+      <3>. USE <2>6 DEF cntns
+      <3>1. pc'[self] \in {"pick", "onSnc", "cntns"}  OBVIOUS
+      <3>2. pc'[self] \notin EvictUnion  BY <3>1
+      <3>3. pc[self] = "cntns"  OBVIOUS
+      <3>4. pc[self] \notin EvictUnion  BY <3>3
+      <3>5. \A s2 \in Writer : s2 # self => pc'[s2] = pc[s2]  OBVIOUS
+      <3>6. evict' = evict  OBVIOUS
+      <3>. QED  BY <3>2, <3>4, <3>5, <3>6
+    <2>7. CASE onSnc(self)
+      <3>. USE <2>7 DEF onSnc
+      <3>1. pc'[self] \in {"pick", "insrt"}  OBVIOUS
+      <3>2. pc'[self] \notin EvictUnion  BY <3>1
+      <3>3. pc[self] = "onSnc"  OBVIOUS
+      <3>4. pc[self] \notin EvictUnion  BY <3>3
+      <3>5. \A s2 \in Writer : s2 # self => pc'[s2] = pc[s2]  OBVIOUS
+      <3>6. evict' = evict  OBVIOUS
+      <3>. QED  BY <3>2, <3>4, <3>5, <3>6
+    <2>8. CASE insrt(self)
+      <3>. USE <2>8 DEF insrt
+      <3>1. pc'[self] \in {"cas", "isMth", "tryEv"}  OBVIOUS
+      <3>2. pc'[self] \notin EvictUnion  BY <3>1
+      <3>3. pc[self] = "insrt"  OBVIOUS
+      <3>4. pc[self] \notin EvictUnion  BY <3>3
+      <3>5. \A s2 \in Writer : s2 # self => pc'[s2] = pc[s2]  OBVIOUS
+      <3>6. evict' = evict  OBVIOUS
+      <3>. QED  BY <3>2, <3>4, <3>5, <3>6
+    <2>9. CASE isMth(self)
+      <3>. USE <2>9 DEF isMth
+      <3>1. pc'[self] \in {"pick", "insrt"}  OBVIOUS
+      <3>2. pc'[self] \notin EvictUnion  BY <3>1
+      <3>3. pc[self] = "isMth"  OBVIOUS
+      <3>4. pc[self] \notin EvictUnion  BY <3>3
+      <3>5. \A s2 \in Writer : s2 # self => pc'[s2] = pc[s2]  OBVIOUS
+      <3>6. evict' = evict  OBVIOUS
+      <3>. QED  BY <3>2, <3>4, <3>5, <3>6
+    <2>10. CASE cas(self)
+      <3>. USE <2>10 DEF cas
+      <3>1. pc'[self] \in {"pick", "insrt"}  OBVIOUS
+      <3>2. pc'[self] \notin EvictUnion  BY <3>1
+      <3>3. pc[self] = "cas"  OBVIOUS
+      <3>4. pc[self] \notin EvictUnion  BY <3>3
+      <3>5. \A s2 \in Writer : s2 # self => pc'[s2] = pc[s2]  OBVIOUS
+      <3>6. evict' = evict  OBVIOUS
+      <3>. QED  BY <3>2, <3>4, <3>5, <3>6
+    <2>11. CASE tryEv(self)
+      \* tryEv may flip `evict' from FALSE to TRUE, but `pc'[self]' goes
+      \* to "waitIns" or "put", neither of which is in EvictUnion.  The
+      \* `evict = TRUE' conjunct is strengthened (never weakened).
+      <3>. USE <2>11 DEF tryEv
+      <3>1. pc'[self] \in {"waitIns", "put"}  OBVIOUS
+      <3>2. pc'[self] \notin EvictUnion  BY <3>1
+      <3>3. pc[self] = "tryEv"  OBVIOUS
+      <3>4. pc[self] \notin EvictUnion  BY <3>3
+      <3>5. \A s2 \in Writer : s2 # self => pc'[s2] = pc[s2]  OBVIOUS
+      \* evict' \in {TRUE, evict}: either strengthened or unchanged.
+      <3>6. evict' = TRUE \/ evict' = evict  OBVIOUS
+      <3>. QED
+        <4>1. \A s1, s2 \in Writer :
+                (pc'[s1] \in EvictUnion /\ pc'[s2] \in EvictUnion)
+                => s1 = s2
+          <5>. SUFFICES ASSUME NEW s1 \in Writer, NEW s2 \in Writer,
+                                pc'[s1] \in EvictUnion,
+                                pc'[s2] \in EvictUnion
+                        PROVE  s1 = s2
+            OBVIOUS
+          <5>1. s1 # self  BY <3>2
+          <5>2. s2 # self  BY <3>2
+          <5>3. pc'[s1] = pc[s1]  BY <3>5, <5>1
+          <5>4. pc'[s2] = pc[s2]  BY <3>5, <5>2
+          <5>5. pc[s1] \in EvictUnion  BY <5>3
+          <5>6. pc[s2] \in EvictUnion  BY <5>4
+          <5>. QED  BY <5>5, <5>6
+        <4>2. \A s \in Writer : pc'[s] \in EvictUnion => evict' = TRUE
+          <5>. SUFFICES ASSUME NEW s \in Writer, pc'[s] \in EvictUnion
+                        PROVE  evict' = TRUE
+            OBVIOUS
+          <5>1. s # self  BY <3>2
+          <5>2. pc'[s] = pc[s]  BY <3>5, <5>1
+          <5>3. pc[s] \in EvictUnion  BY <5>2
+          <5>4. evict = TRUE  BY <5>3
+          <5>. QED  BY <5>4, <3>6
+        <4>. QED  BY <4>1, <4>2
+    <2>12. CASE waitIns(self)
+      \* waitIns transitions pc[self] from "waitIns" to "strIns" (enters
+      \* EvictUnion).  Preservation requires that no OTHER process is
+      \* in EvictUnion pre-state.  This follows from the waitCnt
+      \* precondition `waitCnt = Cardinality(Writer) - 1 + Cardinality(Reader)',
+      \* combined with a WaitCntInv linking `waitCnt' to
+      \* `|{s \in Writer : pc[s] \in {"waitEv", "endWEv"}}|'.  We do not
+      \* formalise WaitCntInv here and leave this one case OMITTED.
+      OMITTED
+    <2>13. CASE endEv(self)
+      \* endEv transitions pc[self] from "endEv" (in EvictUnion) to "put"
+      \* (not in EvictUnion); evict' = FALSE.  By EvictExclusive pre,
+      \* self is the UNIQUE writer in EvictUnion.  After the transition,
+      \* NO writer is in EvictUnion.  Both conjuncts become vacuously true.
+      <3>. USE <2>13 DEF endEv
+      <3>1. pc[self] = "endEv"  OBVIOUS
+      <3>2. pc[self] \in EvictUnion  BY <3>1
+      <3>3. pc'[self] = "put"  OBVIOUS
+      <3>4. pc'[self] \notin EvictUnion  BY <3>3
+      <3>5. \A s2 \in Writer : s2 # self => pc'[s2] = pc[s2]  OBVIOUS
+      <3>6. \A s2 \in Writer : s2 # self => pc[s2] \notin EvictUnion
+        <4>. SUFFICES ASSUME NEW s2 \in Writer, s2 # self,
+                              pc[s2] \in EvictUnion
+                      PROVE  FALSE
+          OBVIOUS
+        <4>1. s2 = self
+          BY <3>2
+        <4>. QED  BY <4>1
+      <3>7. \A s2 \in Writer : pc'[s2] \notin EvictUnion
+        <4>. SUFFICES ASSUME NEW s2 \in Writer
+                      PROVE  pc'[s2] \notin EvictUnion
+          OBVIOUS
+        <4>1. CASE s2 = self
+          BY <3>4, <4>1
+        <4>2. CASE s2 # self
+          <5>1. pc'[s2] = pc[s2]  BY <3>5, <4>2
+          <5>2. pc[s2] \notin EvictUnion  BY <3>6, <4>2
+          <5>. QED  BY <5>1, <5>2
+        <4>. QED  BY <4>1, <4>2
+      <3>. QED  BY <3>7
+    <2>. QED  BY <2>1, <2>2, <2>3, <2>4, <2>5, <2>6, <2>7,
+                  <2>8, <2>9, <2>10, <2>11, <2>12, <2>13
+  <1>4. CASE Terminating
+    BY <1>4 DEF Terminating, vars
+  <1>. QED  BY <1>1, <1>2, <1>3, <1>4 DEF Next
+
+(***************************************************************************)
 (* Inductive step.                                                         *)
 (*                                                                         *)
 (* Most writer disjuncts leave `table' and `evict' UNCHANGED and move      *)
@@ -1457,12 +1886,30 @@ LEMMA EiTypeInd == StackOK /\ EiType /\ [Next]_vars => EiType'
 (* For the Evict procedure body, `strIns' and `rtrn' leave `table'         *)
 (* UNCHANGED and are fully discharged.  `flush' inner-then is discharged   *)
 (* with the help of `EiType' (needed to pin `mod(ei[self], K) \in 1..K').  *)
-(* `nestedIns' (THEN branch), `set', and `flush' outer-else remain         *)
-(* OMITTED -- see (b)/(c).                                                 *)
+(*                                                                         *)
+(* `nestedIns' (THEN branch) is now FULLY DISCHARGED using the mutex       *)
+(* invariant `EvictExclusive' (no other writer is at {"rtrn","endEv"}      *)
+(* while self is in the Evict procedure, and evict = TRUE in those         *)
+(* states makes FindOrPut' vacuous) together with `EjType' (pinning        *)
+(* the overwritten and source cells to 1..K).                              *)
+(*                                                                         *)
+(* `set' is MOSTLY DISCHARGED: FindOrPut' => NoDupsTable' and the third    *)
+(* conjunct close via the same `EvictExclusive' + `EjType' route; the      *)
+(* residual OMITTED is the single fact `lo[self] \in TableValues' at       *)
+(* pc = "set" -- it would follow from a conditional `LoType' invariant     *)
+(* tracking `lo' through `strIns'.                                         *)
+(*                                                                         *)
+(* `flush' outer-else is MOSTLY DISCHARGED: TableType' (UNCHANGED table)   *)
+(* and FindOrPut' => NoDupsTable' (EvictExclusive forces evict = TRUE)     *)
+(* close; the residual OMITTED is the single fact `NoDupsTable' at pc     *)
+(* = "flush", which requires the sort-permutation / insertion-sort-body    *)
+(* invariant -- see (b)/(c).                                               *)
 (***************************************************************************)
-LEMMA DupInvNext == Inv /\ ResultType /\ EiType /\ DupInv
+LEMMA DupInvNext == Inv /\ ResultType /\ EiType /\ EjType
+                    /\ EvictExclusive /\ DupInv
                     /\ [Next]_vars => DupInv'
-  <1>. SUFFICES ASSUME Inv, ResultType, EiType, DupInv, [Next]_vars
+  <1>. SUFFICES ASSUME Inv, ResultType, EiType, EjType, EvictExclusive,
+                       DupInv, [Next]_vars
                 PROVE  DupInv'
     OBVIOUS
   <1>. USE DEF DupInv, TableType, NoDupsTable, FindOrPut, TableValues,
@@ -1504,17 +1951,86 @@ LEMMA DupInvNext == Inv /\ ResultType /\ EiType /\ DupInv
       <3>. QED  BY <3>2, <3>3, <3>4
     <2>2. CASE nestedIns(self)
       \* Split the two branches of the `nestedIns' IF:
-      \*   (A) THEN (compare <= -1): table is copied, breaks NoDupsTable
-      \*       temporarily.  Requires the mutex/sort-permutation machinery --
-      \*       OMITTED (see doc-comment (b)).
+      \*   (A) THEN (compare <= -1): table is modified (a cell is copied
+      \*       from `mod(ej,K)' into `mod(ej+1,K)').  TableType' follows
+      \*       directly from TableType (the written value is a pre-state
+      \*       table cell, already in TableValues).  FindOrPut' =>
+      \*       NoDupsTable' is vacuous: `pc[self] = "nestedIns" \in
+      \*       EvictLabels' forces `evict = TRUE' via `EvictExclusive',
+      \*       which UNCHANGED carries to `evict' = TRUE', so
+      \*       `FindOrPut' = FALSE'.  The third conjunct is vacuous: at
+      \*       any s2 # self with `pc'[s2] \in {"rtrn","endEv"}' the pre
+      \*       state already has `pc[s2] \in EvictUnion', contradicting
+      \*       `EvictExclusive' at self \in EvictUnion.
       \*   (B) ELSE: UNCHANGED <<table, evict>> (only pc and ej update);
       \*       this branch is fully discharged here along the same lines as
       \*       `strIns', `tryEv', etc.
       <3>. USE <2>2 DEF nestedIns
       <3>A. CASE compare(lo[self], mod(ei[self] + 1, K),
                           table[mod(ej[self], K)], mod(ej[self], K)) <= -1
-        \* THEN: genuinely deep -- copies a cell of `table'.
-        OMITTED
+        <4>. USE <3>A, ProcSetIsWriter
+             DEF EjType, EvictExclusive, EvictUnion, EvictLabels
+        <4>. DEFINE pos1 == mod(ej[self] + 1, K)
+        <4>. DEFINE pos2 == mod(ej[self], K)
+        <4>1. table' = [table EXCEPT ![pos1] = table[pos2]]
+          OBVIOUS
+        <4>2. evict' = evict  OBVIOUS
+        <4>3. pc[self] = "nestedIns"  OBVIOUS
+        <4>4. pc[self] \in EvictUnion  BY <4>3
+        \* pin pos1, pos2 \in 1..K
+        <4>5. ej[self] \in Int  OBVIOUS
+        <4>6. ej[self] + 1 \in Int  BY <4>5
+        <4>7. K \in Nat \ {0}  BY OAAssumption
+        <4>8. ej[self] % K \in 0..(K-1)  BY <4>5, <4>7
+        <4>9. (ej[self] + 1) % K \in 0..(K-1)  BY <4>6, <4>7
+        <4>10. pos2 \in 1..K  BY <4>7, <4>8 DEF mod
+        <4>11. pos1 \in 1..K  BY <4>7, <4>9 DEF mod
+        \* evict = TRUE via EvictExclusive at self.
+        <4>12. evict = TRUE  BY <4>4
+        <4>13. evict' = TRUE  BY <4>2, <4>12
+        \* TableType': each cell remains in TableValues after the copy.
+        <4>14. TableType'
+          <5>. SUFFICES ASSUME NEW j \in 1..K
+                        PROVE  table'[j] \in TableValues
+            BY <4>1
+          <5>1. table[pos2] \in TableValues
+            BY <4>10
+          <5>2. CASE j = pos1
+            <6>1. table'[j] = table[pos2]
+              BY <4>1, <4>11, <5>2
+            <6>. QED  BY <6>1, <5>1
+          <5>3. CASE j # pos1
+            <6>1. table'[j] = table[j]
+              BY <4>1, <4>11, <5>3
+            <6>. QED  BY <6>1
+          <5>. QED  BY <5>2, <5>3
+        \* FindOrPut' => NoDupsTable': vacuous because evict' = TRUE.
+        <4>15. FindOrPut' => NoDupsTable'
+          <5>. SUFFICES ASSUME FindOrPut'  PROVE NoDupsTable'
+            OBVIOUS
+          <5>1. evict' = FALSE  BY DEF FindOrPut
+          <5>. QED  BY <4>13, <5>1
+        \* Third conjunct: no OTHER process is in EvictUnion pre-state
+        \* (mutex); self's post-pc stays out of {"rtrn", "endEv"}.
+        <4>16. \A s2 \in ProcSet :
+                  pc'[s2] \in {"rtrn", "endEv"} => NoDupsTable'
+          <5>. SUFFICES ASSUME NEW s2 \in ProcSet,
+                                pc'[s2] \in {"rtrn", "endEv"}
+                        PROVE  NoDupsTable'
+            OBVIOUS
+          <5>1. s2 \in Writer  BY ProcSetIsWriter
+          <5>2. CASE s2 = self
+            <6>1. pc'[self] \in {"set", "nestedIns"}  OBVIOUS
+            <6>2. pc'[self] \notin {"rtrn", "endEv"}  BY <6>1
+            <6>. QED  BY <5>2, <6>2
+          <5>3. CASE s2 # self
+            <6>1. pc'[s2] = pc[s2]  BY <5>3
+            <6>2. pc[s2] \in {"rtrn", "endEv"}  BY <6>1
+            <6>3. pc[s2] \in EvictUnion  BY <6>2
+            <6>4. s2 = self  BY <4>4, <5>1, <6>3
+            <6>. QED  BY <5>3, <6>4
+          <5>. QED  BY <5>2, <5>3
+        <4>. QED  BY <4>14, <4>15, <4>16
       <3>B. CASE ~(compare(lo[self], mod(ei[self] + 1, K),
                             table[mod(ej[self], K)], mod(ej[self], K)) <= -1)
         \* ELSE: UNCHANGED <<table, evict>>, pc'[self] = "set".
@@ -1544,8 +2060,90 @@ LEMMA DupInvNext == Inv /\ ResultType /\ EiType /\ DupInv
         <4>. QED  BY <4>3, <4>4, <4>5
       <3>. QED  BY <3>A, <3>B
     <2>3. CASE set(self)
-      \* set: table' = [table EXCEPT ![mod(ej+1, K)] = lo[self]].  See (b).
-      OMITTED
+      \* set: table' = [table EXCEPT ![mod(ej+1, K)] = lo[self]].
+      \*
+      \* Two of DupInv's three conjuncts close fully here using the same
+      \* mutex argument as in `nestedIns' THEN:
+      \*
+      \*   - FindOrPut' => NoDupsTable': `pc[self] = "set" \in EvictLabels'
+      \*     forces `evict = TRUE' by `EvictExclusive', hence `evict' =
+      \*     TRUE' and FindOrPut' = FALSE (vacuous).
+      \*
+      \*   - \A s2 : pc'[s2] \in {"rtrn","endEv"} => NoDupsTable': at
+      \*     self, pc'[self] = "strIns" \notin {"rtrn","endEv"}; at any
+      \*     s2 # self, pc'[s2] = pc[s2] and pc[s2] \in EvictUnion
+      \*     contradicts `EvictExclusive' (self \in EvictUnion).
+      \*
+      \* TableType' reduces to `lo[self] \in TableValues' (the value
+      \* being written into table[mod(ej+1,K)]).  Establishing this
+      \* requires a conditional `LoType' invariant tracking `lo[self]'
+      \* through the strIns flow (set precondition pc[self] = "set"
+      \* is reachable only after strIns writes `lo[self] := table[...]').
+      \* We leave `lo[self] \in TableValues' as a single, localised
+      \* OMITTED sub-step here; all the other set-case reasoning is
+      \* discharged.
+      <3>. USE <2>3, ProcSetIsWriter
+           DEF set, EjType, EvictExclusive, EvictUnion, EvictLabels
+      <3>. DEFINE pos == mod(ej[self] + 1, K)
+      <3>1. table' = [table EXCEPT ![pos] = lo[self]]
+        OBVIOUS
+      <3>2. evict' = evict  OBVIOUS
+      <3>3. pc[self] = "set"  OBVIOUS
+      <3>4. pc[self] \in EvictUnion  BY <3>3
+      <3>5. pc'[self] = "strIns"  OBVIOUS
+      \* pin pos \in 1..K via EjType + OAAssumption.
+      <3>6. ej[self] \in Int  OBVIOUS
+      <3>7. ej[self] + 1 \in Int  BY <3>6
+      <3>8. K \in Nat \ {0}  BY OAAssumption
+      <3>9. (ej[self] + 1) % K \in 0..(K-1)  BY <3>7, <3>8
+      <3>10. pos \in 1..K  BY <3>8, <3>9 DEF mod
+      \* evict = TRUE via EvictExclusive at self.
+      <3>11. evict = TRUE  BY <3>4
+      <3>12. evict' = TRUE  BY <3>2, <3>11
+      \* TableType': reduces to `lo[self] \in TableValues'.
+      <3>13. lo[self] \in TableValues
+        \* Requires a conditional LoType invariant (see doc-comment).
+        OMITTED
+      <3>14. TableType'
+        <4>. SUFFICES ASSUME NEW j \in 1..K
+                      PROVE  table'[j] \in TableValues
+          BY <3>1
+        <4>1. CASE j = pos
+          <5>1. table'[j] = lo[self]
+            BY <3>1, <3>10, <4>1
+          <5>. QED  BY <5>1, <3>13
+        <4>2. CASE j # pos
+          <5>1. table'[j] = table[j]
+            BY <3>1, <3>10, <4>2
+          <5>. QED  BY <5>1
+        <4>. QED  BY <4>1, <4>2
+      \* FindOrPut' => NoDupsTable': vacuous because evict' = TRUE.
+      <3>15. FindOrPut' => NoDupsTable'
+        <4>. SUFFICES ASSUME FindOrPut'  PROVE NoDupsTable'
+          OBVIOUS
+        <4>1. evict' = FALSE  BY DEF FindOrPut
+        <4>. QED  BY <3>12, <4>1
+      \* Third conjunct: no OTHER process is in EvictUnion pre-state;
+      \* self's post-pc is "strIns", not in {"rtrn", "endEv"}.
+      <3>16. \A s2 \in ProcSet :
+                pc'[s2] \in {"rtrn", "endEv"} => NoDupsTable'
+        <4>. SUFFICES ASSUME NEW s2 \in ProcSet,
+                              pc'[s2] \in {"rtrn", "endEv"}
+                      PROVE  NoDupsTable'
+          OBVIOUS
+        <4>1. s2 \in Writer  BY ProcSetIsWriter
+        <4>2. CASE s2 = self
+          <5>1. pc'[self] = "strIns"  BY <3>5
+          <5>2. pc'[self] \notin {"rtrn", "endEv"}  BY <5>1
+          <5>. QED  BY <4>2, <5>2
+        <4>3. CASE s2 # self
+          <5>1. pc'[s2] = pc[s2]  BY <4>3
+          <5>2. pc[s2] \in {"rtrn", "endEv"}  BY <5>1
+          <5>3. pc[s2] \in EvictUnion  BY <5>2
+          <5>4. s2 = self  BY <3>4, <4>1, <5>3
+          <5>. QED  BY <4>3, <5>4
+        <4>. QED  BY <4>2, <4>3
+      <3>. QED  BY <3>14, <3>15, <3>16
     <2>4. CASE flush(self)
       \* Three sub-cases of flush:
       \*   (A) ei[self] <= K+L, inner-then: `table[mod(ei,K)] := lo'[self]
@@ -1562,8 +2160,51 @@ LEMMA DupInvNext == Inv /\ ResultType /\ EiType /\ DupInv
       \*       invariant -- see doc-comment (b)/(c)).  OMITTED.
       <3>. USE <2>4 DEF flush
       <3>1. CASE ~(ei[self] <= K+L)
-        \* (C) outer-else.  See discussion above.
-        OMITTED
+        \* (C) outer-else: the flush loop exits.  table UNCHANGED,
+        \* evict UNCHANGED, pc'[self] = "rtrn".
+        \*
+        \* TableType' and FindOrPut' => NoDupsTable' close directly
+        \* (via UNCHANGED table / UNCHANGED evict + EvictExclusive).
+        \* The third conjunct triggers at self (pc'[self] = "rtrn")
+        \* and reduces to `NoDupsTable' at pre-state; self is at
+        \* pc[self] = "flush", which is NOT in the pre-state trigger
+        \* set {"rtrn","endEv"}.  So we need NoDupsTable to already
+        \* hold at pc = "flush", which requires carrying it through
+        \* the insertion-sort body (sort-permutation invariant --
+        \* see doc-comment (b)/(c)).  That single sub-step is OMITTED
+        \* below; all other set-case reasoning is discharged here.
+        <4>. USE <3>1, ProcSetIsWriter
+             DEF EvictExclusive, EvictUnion, EvictLabels
+        <4>1. UNCHANGED <<table, evict>>
+          BY <3>1
+        <4>2. pc[self] = "flush"  OBVIOUS
+        <4>3. pc[self] \in EvictUnion  BY <4>2
+        <4>4. evict = TRUE  BY <4>3
+        <4>5. evict' = TRUE  BY <4>1, <4>4
+        <4>6. pc'[self] = "rtrn"  BY <3>1
+        <4>7. \A s2 \in ProcSet : s2 # self => pc'[s2] = pc[s2]
+          BY <3>1
+        <4>8. TableType'
+          BY <4>1
+        <4>9. FindOrPut' => NoDupsTable'
+          <5>. SUFFICES ASSUME FindOrPut'  PROVE NoDupsTable'
+            OBVIOUS
+          <5>1. evict' = FALSE  BY DEF FindOrPut
+          <5>. QED  BY <4>5, <5>1
+        \* Third conjunct: table UNCHANGED, so NoDupsTable' <=> NoDupsTable.
+        \* Need NoDupsTable at pre-state.  At s2 # self, pc'[s2] = pc[s2];
+        \* if pc[s2] \in {"rtrn","endEv"}, by EvictExclusive mutex with
+        \* self \in EvictUnion we get s2 = self, contradiction.  At
+        \* s2 = self, pc'[self] = "rtrn" triggers and we reduce to the
+        \* OMITTED sub-step `NoDupsTable at pc[self] = "flush"'.
+        <4>10. NoDupsTable  \* OMITTED sort-permutation invariant
+          OMITTED
+        <4>11. NoDupsTable'
+          BY <4>1, <4>10
+        <4>12. \A s2 \in ProcSet :
+                  pc'[s2] \in {"rtrn", "endEv"} => NoDupsTable'
+          BY <4>11
+        <4>. QED  BY <4>8, <4>9, <4>12
       <3>2. CASE ei[self] <= K+L
         <4>1. CASE ~( lo'[self] # empty
                      /\ lo'[self] > largestElem(newexternal)
@@ -2131,11 +2772,16 @@ LEMMA DupInvImpliesDuplicates == DupInv => Duplicates
 (* `Spec => [](Inv /\ StackOK /\ ResultType /\ EiType /\ DupInv)'.         *)
 (***************************************************************************)
 THEOREM DuplicatesSafety == Spec => []Duplicates
-  <1>1. Spec => [](Inv /\ StackOK /\ ResultType /\ EiType /\ DupInv)
-    <2>1. Init => Inv /\ StackOK /\ ResultType /\ EiType /\ DupInv
-      BY InitInv, InitStackOK, InitResultType, InitEiType, InitDupInv
-    <2>2. (Inv /\ StackOK /\ ResultType /\ EiType /\ DupInv) /\ [Next]_vars
-            => (Inv /\ StackOK /\ ResultType /\ EiType /\ DupInv)'
+  <1>1. Spec => [](Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
+                   /\ EvictExclusive /\ DupInv)
+    <2>1. Init => Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
+                    /\ EvictExclusive /\ DupInv
+      BY InitInv, InitStackOK, InitResultType, InitEiType, InitEjType,
+         InitEvictExclusive, InitDupInv
+    <2>2. (Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
+             /\ EvictExclusive /\ DupInv) /\ [Next]_vars
+            => (Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
+                  /\ EvictExclusive /\ DupInv)'
       <3>1. Inv /\ StackOK /\ [Next]_vars => Inv'
         BY InvNext
       <3>2. Inv /\ StackOK /\ [Next]_vars => StackOK'
@@ -2144,11 +2790,17 @@ THEOREM DuplicatesSafety == Spec => []Duplicates
         BY ResultTypeInd
       <3>4. StackOK /\ EiType /\ [Next]_vars => EiType'
         BY EiTypeInd
-      <3>5. Inv /\ ResultType /\ EiType /\ DupInv /\ [Next]_vars => DupInv'
+      <3>5. StackOK /\ EiType /\ EjType /\ [Next]_vars => EjType'
+        BY EjTypeInd
+      <3>6. Inv /\ StackOK /\ EvictExclusive /\ [Next]_vars => EvictExclusive'
+        BY EvictExclusiveInd
+      <3>7. Inv /\ ResultType /\ EiType /\ EjType /\ EvictExclusive
+              /\ DupInv /\ [Next]_vars => DupInv'
         BY DupInvNext
-      <3>. QED  BY <3>1, <3>2, <3>3, <3>4, <3>5
+      <3>. QED  BY <3>1, <3>2, <3>3, <3>4, <3>5, <3>6, <3>7
     <2>. QED  BY <2>1, <2>2, PTL DEF Spec
-  <1>2. (Inv /\ StackOK /\ ResultType /\ EiType /\ DupInv) => Duplicates
+  <1>2. (Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
+           /\ EvictExclusive /\ DupInv) => Duplicates
     BY DupInvImpliesDuplicates
   <1>. QED  BY <1>1, <1>2, PTL
 
@@ -2788,15 +3440,17 @@ THEOREM SortedSafety == Spec => []Sorted
   \* depend on the remaining OMITTEDs in `DupInvNext' (nestedIns, set,
   \* flush outer-else, cas successful), but that dependency is no worse
   \* than the OMITTED that previously lived directly in `SortedInvNext'.
-  <1>1. Spec => [](Inv /\ StackOK /\ ResultType /\ EiType /\ DupInv
-                   /\ SortedInv)
-    <2>1. Init => Inv /\ StackOK /\ ResultType /\ EiType /\ DupInv
-                  /\ SortedInv
-      BY InitInv, InitStackOK, InitResultType, InitEiType, InitDupInv,
-         InitSortedInv
-    <2>2. (Inv /\ StackOK /\ ResultType /\ EiType /\ DupInv /\ SortedInv)
+  <1>1. Spec => [](Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
+                   /\ EvictExclusive /\ DupInv /\ SortedInv)
+    <2>1. Init => Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
+                    /\ EvictExclusive /\ DupInv /\ SortedInv
+      BY InitInv, InitStackOK, InitResultType, InitEiType, InitEjType,
+         InitEvictExclusive, InitDupInv, InitSortedInv
+    <2>2. (Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
+             /\ EvictExclusive /\ DupInv /\ SortedInv)
             /\ [Next]_vars
-          => (Inv /\ StackOK /\ ResultType /\ EiType /\ DupInv /\ SortedInv)'
+          => (Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
+                /\ EvictExclusive /\ DupInv /\ SortedInv)'
       <3>1. Inv /\ StackOK /\ [Next]_vars => Inv'
         BY InvNext
       <3>2. Inv /\ StackOK /\ [Next]_vars => StackOK'
@@ -2805,11 +3459,16 @@ THEOREM SortedSafety == Spec => []Sorted
         BY ResultTypeInd
       <3>4. StackOK /\ EiType /\ [Next]_vars => EiType'
         BY EiTypeInd
-      <3>5. Inv /\ ResultType /\ EiType /\ DupInv /\ [Next]_vars => DupInv'
+      <3>5. StackOK /\ EiType /\ EjType /\ [Next]_vars => EjType'
+        BY EjTypeInd
+      <3>6. Inv /\ StackOK /\ EvictExclusive /\ [Next]_vars => EvictExclusive'
+        BY EvictExclusiveInd
+      <3>7. Inv /\ ResultType /\ EiType /\ EjType /\ EvictExclusive
+              /\ DupInv /\ [Next]_vars => DupInv'
         BY DupInvNext
-      <3>6. EiType /\ DupInv /\ SortedInv /\ [Next]_vars => SortedInv'
+      <3>8. EiType /\ DupInv /\ SortedInv /\ [Next]_vars => SortedInv'
         BY SortedInvNext
-      <3>. QED  BY <3>1, <3>2, <3>3, <3>4, <3>5, <3>6
+      <3>. QED  BY <3>1, <3>2, <3>3, <3>4, <3>5, <3>6, <3>7, <3>8
     <2>. QED  BY <2>1, <2>2, PTL DEF Spec
   <1>2. SortedInv => Sorted
     BY SortedInvImpliesSorted
