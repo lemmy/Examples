@@ -2890,13 +2890,138 @@ LEMMA SelectSeqInWindow ==
            /\ SelectSeq(s, LAMBDA p : p < upper /\ p > lower)[i] < upper
   OMITTED
 
+(***************************************************************************)
+(* Indexing into a concatenation.  This is the key sequence-theoretic     *)
+(* fact missing from SequenceTheorems; we derive it via SubSeqOfConcat1 / *)
+(* SubSeqOfConcat2 and SubSeqProperties.                                   *)
+(***************************************************************************)
+LEMMA ConcatIndex ==
+  ASSUME NEW S, NEW s \in Seq(S), NEW t \in Seq(S),
+         NEW i \in 1..(Len(s) + Len(t))
+  PROVE  (s \o t)[i] = IF i <= Len(s) THEN s[i] ELSE t[i - Len(s)]
+  <1>1. Len(s \o t) = Len(s) + Len(t)
+    BY ConcatProperties
+  <1>2. s \o t \in Seq(S)
+    BY ConcatProperties
+  <1>3. Len(s) \in Nat  BY LenProperties
+  <1>4. Len(t) \in Nat  BY LenProperties
+  <1>5. SubSeq(s \o t, i, i) = <<(s \o t)[i]>>
+    BY <1>1, <1>2, SubSeqProperties
+  <1>6. CASE i <= Len(s)
+    <2>1. i \in 1..Len(s)
+      BY <1>6
+    <2>2. SubSeq(s \o t, i, i) = SubSeq(s, i, i)
+      BY <2>1, SubSeqOfConcat1
+    <2>3. SubSeq(s, i, i) = <<s[i]>>
+      BY <2>1, SubSeqProperties
+    <2>4. <<(s \o t)[i]>> = <<s[i]>>
+      BY <1>5, <2>2, <2>3
+    <2>. QED  BY <2>4, <1>6
+  <1>7. CASE i > Len(s)
+    <2>1. i \in Len(s) + 1 .. Len(s) + Len(t)
+      BY <1>7, <1>3, <1>4
+    <2>2. SubSeq(s \o t, i, i) = SubSeq(t, i - Len(s), i - Len(s))
+      BY <2>1, SubSeqOfConcat2
+    <2>3. i - Len(s) \in 1..Len(t)
+      BY <1>7, <1>3, <1>4, <2>1
+    <2>4. SubSeq(t, i - Len(s), i - Len(s)) = <<t[i - Len(s)]>>
+      BY <2>3, SubSeqProperties
+    <2>5. <<(s \o t)[i]>> = <<t[i - Len(s)]>>
+      BY <1>5, <2>2, <2>4
+    <2>. QED  BY <2>5, <1>7
+  <1>. QED  BY <1>6, <1>7
+
 \* Concatenation preserves strict-ascending order when the boundary holds.
 LEMMA ConcatStrAsc ==
   ASSUME NEW s1 \in Seq(Int), NEW s2 \in Seq(Int),
          StrAsc(s1), StrAsc(s2),
          s1 = <<>> \/ s2 = <<>> \/ s1[Len(s1)] < s2[1]
   PROVE  StrAsc(s1 \o s2)
-  OMITTED
+  <1>. DEFINE c == s1 \o s2
+  <1>1. Len(c) = Len(s1) + Len(s2)
+    BY ConcatProperties
+  <1>2. c \in Seq(Int)
+    BY ConcatProperties
+  <1>3. Len(s1) \in Nat  BY LenProperties
+  <1>4. Len(s2) \in Nat  BY LenProperties
+  <1>. SUFFICES ASSUME NEW i \in 1..(Len(c) - 1)
+                PROVE  c[i] < c[i+1]
+    BY DEF StrAsc
+  <1>5. i \in 1..(Len(s1) + Len(s2))
+    BY <1>1, <1>3, <1>4
+  <1>6. i + 1 \in 1..(Len(s1) + Len(s2))
+    BY <1>1, <1>3, <1>4
+  <1>7. c[i] = IF i <= Len(s1) THEN s1[i] ELSE s2[i - Len(s1)]
+    BY <1>5, ConcatIndex
+  <1>8. c[i+1] = IF i+1 <= Len(s1) THEN s1[i+1] ELSE s2[i+1 - Len(s1)]
+    BY <1>6, ConcatIndex
+  <1>9. CASE i + 1 <= Len(s1)
+    \* Both i and i+1 land in s1.
+    <2>1. i <= Len(s1)
+      BY <1>9
+    <2>2. c[i] = s1[i]
+      BY <1>7, <2>1
+    <2>3. c[i+1] = s1[i+1]
+      BY <1>8, <1>9
+    <2>4. i \in 1..(Len(s1) - 1)
+      BY <1>9, <1>3, <1>4
+    <2>5. s1[i] < s1[i+1]
+      BY <2>4 DEF StrAsc
+    <2>. QED  BY <2>2, <2>3, <2>5
+  <1>10. CASE i <= Len(s1) /\ ~(i + 1 <= Len(s1))
+    \* Boundary: i = Len(s1), i+1 = Len(s1)+1.
+    <2>1. i = Len(s1)
+      BY <1>10, <1>3, <1>4
+    <2>2. c[i] = s1[Len(s1)]
+      BY <1>7, <1>10, <2>1
+    <2>3. i + 1 - Len(s1) = 1
+      BY <2>1
+    <2>4. c[i+1] = s2[1]
+      BY <1>8, <1>10, <2>3
+    \* At the boundary we must have s1 # <<>> (since i >= 1 and i = Len(s1))
+    \* and s2 # <<>> (since i+1 = Len(s1)+1 <= Len(c)-1+1 = Len(s1)+Len(s2),
+    \* so Len(s2) >= 1).
+    <2>5. s1 # <<>>
+      <3>. SUFFICES ASSUME s1 = <<>>  PROVE FALSE
+        OBVIOUS
+      <3>1. Len(s1) = 0
+        BY EmptySeq
+      <3>2. i = 0
+        BY <2>1, <3>1
+      <3>. QED  BY <3>2
+    <2>6. s2 # <<>>
+      <3>. SUFFICES ASSUME s2 = <<>>  PROVE FALSE
+        OBVIOUS
+      <3>1. Len(s2) = 0
+        BY EmptySeq
+      <3>2. Len(c) = Len(s1)
+        BY <1>1, <3>1
+      <3>3. i \in 1..(Len(s1) - 1)
+        BY <3>2
+      <3>4. i + 1 <= Len(s1)
+        BY <3>3, <1>3
+      <3>. QED  BY <3>4, <1>10
+    <2>7. s1[Len(s1)] < s2[1]
+      BY <2>5, <2>6
+    <2>. QED  BY <2>2, <2>4, <2>7
+  <1>11. CASE i > Len(s1)
+    \* Both i and i+1 land in s2.
+    <2>1. ~(i <= Len(s1))
+      BY <1>11
+    <2>2. ~(i + 1 <= Len(s1))
+      BY <1>11
+    <2>3. c[i] = s2[i - Len(s1)]
+      BY <1>7, <2>1
+    <2>4. c[i+1] = s2[i + 1 - Len(s1)]
+      BY <1>8, <2>2
+    <2>5. i - Len(s1) \in 1..(Len(s2) - 1)
+      BY <1>11, <1>1, <1>3, <1>4
+    <2>6. (i - Len(s1)) + 1 = i + 1 - Len(s1)
+      OBVIOUS
+    <2>7. s2[i - Len(s1)] < s2[(i - Len(s1)) + 1]
+      BY <2>5 DEF StrAsc
+    <2>. QED  BY <2>3, <2>4, <2>6, <2>7
+  <1>. QED  BY <1>9, <1>10, <1>11, <1>3, <1>4
 
 \* Append preserves strict-ascending order when the appended element is
 \* strictly greater than the current last element (or the sequence is
@@ -2906,7 +3031,56 @@ LEMMA AppendStrAsc ==
          StrAsc(s),
          s = <<>> \/ s[Len(s)] < elt
   PROVE  StrAsc(Append(s, elt))
-  OMITTED
+  <1>. DEFINE ap == Append(s, elt)
+  <1>1. ap \in Seq(Int)
+    BY AppendProperties
+  <1>2. Len(ap) = Len(s) + 1
+    BY AppendProperties
+  <1>3. \A i \in 1..Len(s) : ap[i] = s[i]
+    BY AppendProperties
+  <1>4. ap[Len(s) + 1] = elt
+    BY AppendProperties
+  <1>5. Len(s) \in Nat
+    BY LenProperties
+  <1>. SUFFICES ASSUME NEW i \in 1..(Len(ap) - 1)
+                PROVE  ap[i] < ap[i+1]
+    BY DEF StrAsc
+  <1>6. i \in 1..Len(s)
+    BY <1>2, <1>5
+  <1>7. ap[i] = s[i]
+    BY <1>3, <1>6
+  <1>8. CASE i < Len(s)
+    <2>1. i+1 \in 1..Len(s)
+      BY <1>6, <1>8, <1>5
+    <2>2. ap[i+1] = s[i+1]
+      BY <1>3, <2>1
+    <2>3. i \in 1..(Len(s) - 1)
+      BY <1>6, <1>8, <1>5
+    <2>4. s[i] < s[i+1]
+      BY <2>3 DEF StrAsc
+    <2>. QED  BY <1>7, <2>2, <2>4
+  <1>9. CASE i = Len(s)
+    <2>1. i + 1 = Len(s) + 1
+      BY <1>9
+    <2>2. ap[i+1] = elt
+      BY <1>4, <2>1
+    <2>3. s # <<>>
+      \* If s = <<>>, Len(s) = 0, but i >= 1 and i = Len(s), contradiction.
+      <3>. SUFFICES ASSUME s = <<>>  PROVE FALSE
+        OBVIOUS
+      <3>1. Len(s) = 0
+        BY EmptySeq
+      <3>2. i = 0
+        BY <1>9, <3>1
+      <3>3. i \in 1..(Len(ap) - 1)
+        OBVIOUS
+      <3>. QED  BY <3>2, <3>3, <1>2, <1>5
+    <2>4. s[Len(s)] < elt
+      BY <2>3
+    <2>5. s[i] < elt
+      BY <1>9, <2>4
+    <2>. QED  BY <1>7, <2>2, <2>5
+  <1>. QED  BY <1>6, <1>8, <1>9, <1>5
 
 \* `SelectSeq' on the empty sequence is the empty sequence (for any
 \* predicate).  This one is easy enough to discharge from the standard
