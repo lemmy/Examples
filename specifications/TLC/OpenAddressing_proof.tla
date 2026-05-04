@@ -3725,7 +3725,7 @@ LEMMA SortedInvNext ==
                   BY <8>1, <7>5, <7>6
                 <8>4. Len(base) \in Nat /\ Len(base) # 0
                   <9>1. Len(base) \in Nat  BY <7>5, <7>6, <8>2
-                  <9>2. Len(base) # 0  BY <8>1, <7>5, <8>2
+                  <9>2. Len(base) # 0  BY <8>1, <7>5, <7>6, <8>2
                   <9>. QED  BY <9>1, <9>2
                 \* Element at position Len(base) of newexternal \o ss
                 \* equals ss[Len(ss)].
