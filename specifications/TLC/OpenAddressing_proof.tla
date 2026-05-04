@@ -1637,6 +1637,191 @@ LEMMA ResultTypeInd == ResultType /\ [Next]_vars => ResultType'
   <1>. QED  BY <1>1, <1>2, <1>3, <1>4 DEF Next
 
 (***************************************************************************)
+(* Typing invariant: `ei' is a Nat-valued function on `ProcSet', and any   *)
+(* saved `ei' frame on a non-empty `stack' is also a Nat.  The second      *)
+(* conjunct is necessary because `rtrn' pops `ei[self]' from the top of    *)
+(* the stack; without it we could not conclude `ei'[self] \in Nat' after  *)
+(* a return.                                                               *)
+(*                                                                         *)
+(* `EiType' is used to discharge `DupInvNext's flush inner-then branch,    *)
+(* where we need `mod(ei[self], K) \in 1..K' -- a consequence of           *)
+(* `ei[self] \in Nat' and `K \in Nat \ {0}' (OAAssumption).                *)
+(***************************************************************************)
+EiType ==
+  /\ ei \in [ProcSet -> Nat]
+  /\ DOMAIN lo = ProcSet
+  /\ \A self \in ProcSet :
+        stack[self] # <<>> => Head(stack[self]).ei \in Nat
+
+LEMMA InitEiType == Init => EiType
+  <1>. SUFFICES ASSUME Init  PROVE EiType
+    OBVIOUS
+  <1>1. ei = [self \in ProcSet |-> 1]
+    BY DEF Init
+  <1>2. ei \in [ProcSet -> Nat]
+    BY <1>1 DEF EiType
+  <1>3. \A self \in ProcSet : stack[self] = <<>>
+    BY DEF Init
+  <1>4. \A self \in ProcSet :
+            stack[self] # <<>> => Head(stack[self]).ei \in Nat
+    BY <1>3
+  <1>5. lo = [self \in ProcSet |-> 0]
+    BY DEF Init
+  <1>6. DOMAIN lo = ProcSet
+    BY <1>5
+  <1>. QED  BY <1>2, <1>4, <1>6 DEF EiType
+
+LEMMA EiTypeInd == StackOK /\ EiType /\ [Next]_vars => EiType'
+  <1>. SUFFICES ASSUME StackOK, EiType, [Next]_vars  PROVE EiType'
+    OBVIOUS
+  <1>. USE DEF EiType, StackOK, EvictLabels, WriterLabels, ProcSet
+  <1>1. CASE UNCHANGED vars
+    BY <1>1 DEF vars
+  <1>2. ASSUME NEW self \in ProcSet, Evict(self)
+        PROVE  EiType'
+    <2>. USE <1>2 DEF Evict
+    <2>1. CASE strIns(self)
+      \* ei' = ei (inner-then) or ei' = [ei EXCEPT ![self] = 1] (inner-else);
+      \* stack UNCHANGED.
+      <3>. USE <2>1 DEF strIns
+      <3>1. stack' = stack  OBVIOUS
+      <3>2. CASE ei[self] <= K+L
+        <4>1. ei' = ei  BY <3>2
+        <4>. QED  BY <3>1, <4>1
+      <3>3. CASE ~(ei[self] <= K+L)
+        <4>1. ei' = [ei EXCEPT ![self] = 1]  BY <3>3
+        <4>. QED  BY <3>1, <4>1
+      <3>. QED  BY <3>2, <3>3
+    <2>2. CASE nestedIns(self)
+      \* ei, stack UNCHANGED.
+      BY <2>2 DEF nestedIns
+    <2>3. CASE set(self)
+      \* ei' = [ei EXCEPT ![self] = ei[self] + 1]; stack UNCHANGED.
+      <3>. USE <2>3 DEF set
+      <3>1. stack' = stack  OBVIOUS
+      <3>2. ei'[self] = ei[self] + 1
+        OBVIOUS
+      <3>3. ei[self] \in Nat
+        OBVIOUS
+      <3>4. \A s2 \in ProcSet : s2 # self => ei'[s2] = ei[s2]
+        OBVIOUS
+      <3>. QED  BY <3>1, <3>2, <3>3, <3>4
+    <2>4. CASE flush(self)
+      \* outer-then: ei' = [ei EXCEPT ![self] = ei[self] + 1];
+      \* outer-else: ei, stack UNCHANGED.
+      <3>. USE <2>4 DEF flush
+      <3>1. stack' = stack  OBVIOUS
+      <3>2. CASE ei[self] <= K+L
+        <4>1. ei'[self] = ei[self] + 1
+          BY <3>2
+        <4>2. \A s2 \in ProcSet : s2 # self => ei'[s2] = ei[s2]
+          BY <3>2
+        <4>3. ei[self] \in Nat
+          OBVIOUS
+        <4>. QED  BY <3>1, <4>1, <4>2, <4>3
+      <3>3. CASE ~(ei[self] <= K+L)
+        <4>1. ei' = ei  BY <3>3
+        <4>. QED  BY <3>1, <4>1
+      <3>. QED  BY <3>2, <3>3
+    <2>5. CASE rtrn(self)
+      \* Pops stack; ei'[self] = Head(stack[self]).ei.
+      <3>. USE <2>5 DEF rtrn
+      <3>1. pc[self] = "rtrn"
+        OBVIOUS
+      <3>2. pc[self] \in EvictLabels
+        BY <3>1
+      <3>3. stack[self] # <<>>
+        BY <3>2
+      <3>4. Head(stack[self]).ei \in Nat
+        BY <3>3
+      <3>5. ei'[self] = Head(stack[self]).ei
+        OBVIOUS
+      <3>6. ei'[self] \in Nat
+        BY <3>4, <3>5
+      <3>7. \A s2 \in ProcSet : s2 # self => ei'[s2] = ei[s2]
+        OBVIOUS
+      <3>8. ei' \in [ProcSet -> Nat]
+        BY <3>6, <3>7
+      \* Post-state stack: Tail at self, unchanged at others.  By StackOK
+      \* the pre-state stack[self] has exactly one frame, so the tail is
+      \* empty and the second conjunct is vacuous at self.
+      <3>9. stack'[self] = Tail(stack[self])
+        OBVIOUS
+      <3>10. Tail(stack[self]) = <<>>
+        BY <3>2
+      <3>11. stack'[self] = <<>>
+        BY <3>9, <3>10
+      <3>12. \A s2 \in ProcSet :
+                stack'[s2] # <<>> => Head(stack'[s2]).ei \in Nat
+        <4>. SUFFICES ASSUME NEW s2 \in ProcSet, stack'[s2] # <<>>
+                      PROVE  Head(stack'[s2]).ei \in Nat
+          OBVIOUS
+        <4>1. CASE s2 = self
+          BY <3>11, <4>1
+        <4>2. CASE s2 # self
+          <5>1. stack'[s2] = stack[s2]
+            BY <4>2
+          <5>. QED  BY <5>1
+        <4>. QED  BY <4>1, <4>2
+      <3>. QED  BY <3>8, <3>12
+    <2>. QED  BY <2>1, <2>2, <2>3, <2>4, <2>5
+  <1>3. ASSUME NEW self \in Writer, p(self)
+        PROVE  EiType'
+    <2>. USE <1>3, ProcSetIsWriter DEF p
+    <2>1. CASE pick(self)      BY <2>1 DEF pick
+    <2>2. CASE put(self)       BY <2>2 DEF put
+    <2>3. CASE waitEv(self)    BY <2>3 DEF waitEv
+    <2>4. CASE endWEv(self)    BY <2>4 DEF endWEv
+    <2>5. CASE chkSnc(self)    BY <2>5 DEF chkSnc
+    <2>6. CASE cntns(self)     BY <2>6 DEF cntns
+    <2>7. CASE onSnc(self)     BY <2>7 DEF onSnc
+    <2>8. CASE isMth(self)     BY <2>8 DEF isMth
+    <2>9. CASE insrt(self)     BY <2>9 DEF insrt
+    <2>10. CASE cas(self)      BY <2>10 DEF cas
+    <2>11. CASE tryEv(self)    BY <2>11 DEF tryEv
+    <2>12. CASE waitIns(self)
+      \* Pushes frame with .ei = ei[self], then ei' = [ei EXCEPT ![self] = 1].
+      <3>. USE <2>12 DEF waitIns
+      <3>1. ei'[self] = 1
+        OBVIOUS
+      <3>2. \A s2 \in ProcSet : s2 # self => ei'[s2] = ei[s2]
+        OBVIOUS
+      <3>3. ei' \in [ProcSet -> Nat]
+        BY <3>1, <3>2
+      <3>4. ei[self] \in Nat
+        OBVIOUS
+      <3>5. stack'[self] =
+              <<[procedure |-> "Evict", pc |-> "endEv",
+                 ei |-> ei[self], ej |-> ej[self], lo |-> lo[self]]>>
+              \o stack[self]
+        OBVIOUS
+      <3>6. Head(stack'[self]).ei = ei[self]
+        BY <3>5
+      <3>7. Head(stack'[self]).ei \in Nat
+        BY <3>4, <3>6
+      <3>8. \A s2 \in ProcSet : s2 # self => stack'[s2] = stack[s2]
+        OBVIOUS
+      <3>9. \A s2 \in ProcSet :
+                stack'[s2] # <<>> => Head(stack'[s2]).ei \in Nat
+        <4>. SUFFICES ASSUME NEW s2 \in ProcSet, stack'[s2] # <<>>
+                      PROVE  Head(stack'[s2]).ei \in Nat
+          OBVIOUS
+        <4>1. CASE s2 = self
+          BY <3>7, <4>1
+        <4>2. CASE s2 # self
+          <5>1. stack'[s2] = stack[s2]
+            BY <3>8, <4>2
+          <5>. QED  BY <5>1
+        <4>. QED  BY <4>1, <4>2
+      <3>. QED  BY <3>3, <3>9
+    <2>13. CASE endEv(self)    BY <2>13 DEF endEv
+    <2>. QED  BY <2>1, <2>2, <2>3, <2>4, <2>5, <2>6, <2>7,
+                  <2>8, <2>9, <2>10, <2>11, <2>12, <2>13
+  <1>4. CASE Terminating
+    BY <1>4 DEF Terminating, vars
+  <1>. QED  BY <1>1, <1>2, <1>3, <1>4 DEF Next
+
+(***************************************************************************)
 (* Inductive step.                                                         *)
 (*                                                                         *)
 (* Most writer disjuncts leave `table' and `evict' UNCHANGED and move      *)
@@ -1651,14 +1836,18 @@ LEMMA ResultTypeInd == ResultType /\ [Next]_vars => ResultType'
 (*     post-flush pc invariant (third conjunct of DupInv).                 *)
 (*                                                                         *)
 (* For the Evict procedure body, `strIns' and `rtrn' leave `table'         *)
-(* UNCHANGED and are fully discharged.  `nestedIns' (THEN branch), `set',  *)
-(* and `flush' are OMITTED -- see (b)/(c).                                 *)
+(* UNCHANGED and are fully discharged.  `flush' inner-then is discharged   *)
+(* with the help of `EiType' (needed to pin `mod(ei[self], K) \in 1..K').  *)
+(* `nestedIns' (THEN branch), `set', and `flush' outer-else remain         *)
+(* OMITTED -- see (b)/(c).                                                 *)
 (***************************************************************************)
-LEMMA DupInvNext == Inv /\ ResultType /\ DupInv /\ [Next]_vars => DupInv'
-  <1>. SUFFICES ASSUME Inv, ResultType, DupInv, [Next]_vars  PROVE DupInv'
+LEMMA DupInvNext == Inv /\ ResultType /\ EiType /\ DupInv
+                    /\ [Next]_vars => DupInv'
+  <1>. SUFFICES ASSUME Inv, ResultType, EiType, DupInv, [Next]_vars
+                PROVE  DupInv'
     OBVIOUS
   <1>. USE DEF DupInv, TableType, NoDupsTable, FindOrPut, TableValues,
-              Inv, PcRangeOK, ProcSet, ResultType
+              Inv, PcRangeOK, ProcSet, ResultType, EiType
   (***********************************************************************)
   (* Stutter.                                                              *)
   (***********************************************************************)
@@ -1706,10 +1895,8 @@ LEMMA DupInvNext == Inv /\ ResultType /\ DupInv /\ [Next]_vars => DupInv'
       \* Three sub-cases of flush:
       \*   (A) ei[self] <= K+L, inner-then: `table[mod(ei,K)] := lo'[self]
       \*       * (-1)' -- |table[.]| is preserved, so `NoDupsTable' survives
-      \*       unchanged.  The structural argument requires `pos ==
-      \*       mod(ei[self], K) \in 1..K', i.e. `ei[self] \in Int', which
-      \*       is not carried as a typing invariant in `Inv'/`DupInv'.
-      \*       OMITTED (deferred until we add an `EiType' invariant).
+      \*       unchanged.  FULLY DISCHARGED with the help of `EiType'
+      \*       (needed to pin `mod(ei[self], K) \in 1..K').
       \*   (B) ei[self] <= K+L, inner-else: UNCHANGED table/newexternal
       \*       (FULLY DISCHARGED below);
       \*   (C) ei[self] >  K+L, outer-else: flush loop exits, pc'[self]
@@ -1762,8 +1949,145 @@ LEMMA DupInvNext == Inv /\ ResultType /\ DupInv /\ [Next]_vars => DupInv'
                    /\ lo'[self] > largestElem(newexternal)
                    /\ ((ei[self] <= K /\ ~wrapped(lo'[self], ei[self]))
                        \/ (ei[self] >  K /\  wrapped(lo'[self], ei[self])))
-          \* (A) inner-then.  See discussion above.
-          OMITTED
+          \* (A) inner-then: `table[mod(ei, K)] := lo'[self] * (-1)'.
+          \* The mutation preserves |cell|, so NoDupsTable is preserved.
+          \* We use `EiType' to pin `pos = mod(ei[self], K) \in 1..K'
+          \* and `DOMAIN lo = ProcSet' to reduce `[lo EXCEPT ...][self]'.
+          <5>. DEFINE pos == mod(ei[self], K)
+          <5>0. lo' = [lo EXCEPT ![self] = table[pos]]
+            BY <3>2
+          <5>1. lo'[self] = table[pos]
+            BY <5>0
+          <5>2. table' = [table EXCEPT ![pos] = lo'[self] * (-1)]
+            BY <3>2, <4>2
+          <5>3. ei'[self] = ei[self] + 1
+            BY <3>2
+          <5>4. pc'[self] = "flush"
+            BY <3>2
+          <5>5. evict' = evict
+            OBVIOUS
+          <5>6. \A s2 \in ProcSet : s2 # self => pc'[s2] = pc[s2]
+            BY <3>2
+          \* Establish pos \in 1..K via EiType + OAAssumption.
+          <5>7. ei[self] \in Nat
+            OBVIOUS
+          <5>8. K \in Nat \ {0}
+            BY OAAssumption
+          <5>9. ei[self] % K \in 0 .. (K - 1)
+            BY <5>7, <5>8
+          <5>10. pos \in 1..K
+            BY <5>8, <5>9 DEF mod
+          \* Typing of the cell we are overwriting.
+          <5>11. lo'[self] \in TableValues
+            BY <5>1, <5>10
+          <5>12. lo'[self] \in fps \cup NegFps
+            BY <5>11, <4>2
+          <5>13. lo'[self] \in Int
+            <6>1. CASE lo'[self] \in fps
+              BY <6>1, OAAssumption
+            <6>2. CASE lo'[self] \in NegFps
+              <7>. PICK f \in fps : lo'[self] = -f
+                BY <6>2 DEF NegFps
+              <7>1. f \in Nat \ {0}  BY OAAssumption
+              <7>. QED  BY <7>1
+            <6>. QED  BY <5>12, <6>1, <6>2
+          <5>14. lo'[self] * (-1) \in fps \cup NegFps
+            <6>1. CASE lo'[self] \in fps
+              <7>1. lo'[self] \in Nat \ {0}  BY <6>1, OAAssumption
+              <7>2. lo'[self] * (-1) = -lo'[self]
+                BY <7>1
+              <7>3. -lo'[self] \in NegFps
+                BY <6>1 DEF NegFps
+              <7>. QED  BY <7>2, <7>3
+            <6>2. CASE lo'[self] \in NegFps
+              <7>. PICK f \in fps : lo'[self] = -f
+                BY <6>2 DEF NegFps
+              <7>1. f \in Nat \ {0}  BY OAAssumption
+              <7>2. lo'[self] * (-1) = f
+                BY <7>1
+              <7>. QED  BY <7>2
+            <6>. QED  BY <5>12, <6>1, <6>2
+          <5>15. TableType'
+            <6>. SUFFICES ASSUME NEW j \in 1..K
+                          PROVE  table'[j] \in TableValues
+              BY <5>2
+            <6>1. CASE j = pos
+              <7>1. table'[j] = lo'[self] * (-1)
+                BY <5>2, <5>10, <6>1
+              <7>2. lo'[self] * (-1) \in TableValues
+                BY <5>14
+              <7>. QED  BY <7>1, <7>2
+            <6>2. CASE j # pos
+              <7>1. table'[j] = table[j]
+                BY <5>2, <5>10, <6>2
+              <7>. QED  BY <7>1
+            <6>. QED  BY <6>1, <6>2
+          \* abs preservation at each cell.
+          <5>16. \A j \in 1..K : abs(table'[j]) = abs(table[j])
+            <6>. SUFFICES ASSUME NEW j \in 1..K
+                          PROVE  abs(table'[j]) = abs(table[j])
+              OBVIOUS
+            <6>1. CASE j = pos
+              <7>1. table'[j] = lo'[self] * (-1)
+                BY <5>2, <5>10, <6>1
+              <7>2. table[j] = lo'[self]
+                BY <5>1, <6>1
+              <7>3. abs(lo'[self] * (-1)) = abs(lo'[self])
+                BY <5>13 DEF abs
+              <7>. QED  BY <7>1, <7>2, <7>3
+            <6>2. CASE j # pos
+              <7>1. table'[j] = table[j]
+                BY <5>2, <5>10, <6>2
+              <7>. QED  BY <7>1
+            <6>. QED  BY <6>1, <6>2
+          \* Forward non-emptiness: if table'[j] # empty then table[j] # empty.
+          <5>17. \A j \in 1..K : table'[j] # empty => table[j] # empty
+            <6>. SUFFICES ASSUME NEW j \in 1..K, table'[j] # empty
+                          PROVE  table[j] # empty
+              OBVIOUS
+            <6>1. CASE j = pos
+              \* table[pos] = lo'[self] # empty by the CASE hypothesis.
+              BY <5>1, <4>2, <6>1
+            <6>2. CASE j # pos
+              <7>1. table'[j] = table[j]
+                BY <5>2, <5>10, <6>2
+              <7>. QED  BY <7>1
+            <6>. QED  BY <6>1, <6>2
+          <5>18. NoDupsTable => NoDupsTable'
+            <6>. SUFFICES ASSUME NoDupsTable,
+                                  NEW i \in 1..K, NEW j \in 1..K,
+                                  i # j,
+                                  table'[i] # empty,
+                                  table'[j] # empty
+                          PROVE  abs(table'[i]) # abs(table'[j])
+              OBVIOUS
+            <6>1. table[i] # empty /\ table[j] # empty
+              BY <5>17
+            <6>2. abs(table[i]) # abs(table[j])
+              BY <6>1
+            <6>. QED  BY <5>16, <6>2
+          <5>19. FindOrPut' => NoDupsTable'
+            <6>. SUFFICES ASSUME FindOrPut'  PROVE NoDupsTable'
+              OBVIOUS
+            <6>1. FindOrPut  BY <5>5
+            <6>2. NoDupsTable  BY <6>1
+            <6>. QED  BY <6>2, <5>18
+          <5>20. \A s2 \in ProcSet :
+                    pc'[s2] \in {"rtrn", "endEv"} => NoDupsTable'
+            <6>. SUFFICES ASSUME NEW s2 \in ProcSet,
+                                  pc'[s2] \in {"rtrn", "endEv"}
+                          PROVE  NoDupsTable'
+              OBVIOUS
+            <6>1. CASE s2 = self
+              <7>1. pc'[self] = "flush"  BY <5>4
+              <7>. QED  BY <6>1, <7>1
+            <6>2. CASE s2 # self
+              <7>1. pc'[s2] = pc[s2]  BY <5>6, <6>2
+              <7>2. pc[s2] \in {"rtrn", "endEv"}  BY <7>1
+              <7>3. NoDupsTable  BY <7>2
+              <7>. QED  BY <7>3, <5>18
+            <6>. QED  BY <6>1, <6>2
+          <5>. QED  BY <5>15, <5>19, <5>20
         <4>. QED  BY <4>1, <4>2
       <3>. QED  BY <3>1, <3>2
     <2>5. CASE rtrn(self)
@@ -2146,27 +2470,30 @@ LEMMA DupInvImpliesDuplicates == DupInv => Duplicates
 (* Main safety theorem: Spec implies []Duplicates.                         *)
 (*                                                                         *)
 (* `DupInv' is proved inductive in conjunction with `Inv', `StackOK'       *)
-(* (required by `InvNext's `rtrn' case), and `ResultType' (required by    *)
-(* the failed-CAS branch of `DupInvNext'), so the PTL chain proves        *)
-(* `Spec => [](Inv /\ StackOK /\ ResultType /\ DupInv)'.                   *)
+(* (required by `InvNext's `rtrn' case), `ResultType' (required by the    *)
+(* failed-CAS branch of `DupInvNext'), and `EiType' (required by the      *)
+(* flush inner-then branch of `DupInvNext'), so the PTL chain proves      *)
+(* `Spec => [](Inv /\ StackOK /\ ResultType /\ EiType /\ DupInv)'.         *)
 (***************************************************************************)
 THEOREM DuplicatesSafety == Spec => []Duplicates
-  <1>1. Spec => [](Inv /\ StackOK /\ ResultType /\ DupInv)
-    <2>1. Init => Inv /\ StackOK /\ ResultType /\ DupInv
-      BY InitInv, InitStackOK, InitResultType, InitDupInv
-    <2>2. (Inv /\ StackOK /\ ResultType /\ DupInv) /\ [Next]_vars =>
-            (Inv /\ StackOK /\ ResultType /\ DupInv)'
+  <1>1. Spec => [](Inv /\ StackOK /\ ResultType /\ EiType /\ DupInv)
+    <2>1. Init => Inv /\ StackOK /\ ResultType /\ EiType /\ DupInv
+      BY InitInv, InitStackOK, InitResultType, InitEiType, InitDupInv
+    <2>2. (Inv /\ StackOK /\ ResultType /\ EiType /\ DupInv) /\ [Next]_vars
+            => (Inv /\ StackOK /\ ResultType /\ EiType /\ DupInv)'
       <3>1. Inv /\ StackOK /\ [Next]_vars => Inv'
         BY InvNext
       <3>2. Inv /\ StackOK /\ [Next]_vars => StackOK'
         BY StackOKInd
       <3>3. ResultType /\ [Next]_vars => ResultType'
         BY ResultTypeInd
-      <3>4. Inv /\ ResultType /\ DupInv /\ [Next]_vars => DupInv'
+      <3>4. StackOK /\ EiType /\ [Next]_vars => EiType'
+        BY EiTypeInd
+      <3>5. Inv /\ ResultType /\ EiType /\ DupInv /\ [Next]_vars => DupInv'
         BY DupInvNext
-      <3>. QED  BY <3>1, <3>2, <3>3, <3>4
+      <3>. QED  BY <3>1, <3>2, <3>3, <3>4, <3>5
     <2>. QED  BY <2>1, <2>2, PTL DEF Spec
-  <1>2. (Inv /\ StackOK /\ ResultType /\ DupInv) => Duplicates
+  <1>2. (Inv /\ StackOK /\ ResultType /\ EiType /\ DupInv) => Duplicates
     BY DupInvImpliesDuplicates
   <1>. QED  BY <1>1, <1>2, PTL
 
