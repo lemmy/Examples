@@ -1503,10 +1503,46 @@ LEMMA DupInvNext == Inv /\ ResultType /\ EiType /\ DupInv
         <4>. QED  BY <4>1, <4>2
       <3>. QED  BY <3>2, <3>3, <3>4
     <2>2. CASE nestedIns(self)
-      \* THEN branch copies a cell of `table' (potentially breaking
-      \* NoDupsTable temporarily); ELSE branch is UNCHANGED.  We OMIT;
-      \* see doc-comment (b).
-      OMITTED
+      \* Split the two branches of the `nestedIns' IF:
+      \*   (A) THEN (compare <= -1): table is copied, breaks NoDupsTable
+      \*       temporarily.  Requires the mutex/sort-permutation machinery --
+      \*       OMITTED (see doc-comment (b)).
+      \*   (B) ELSE: UNCHANGED <<table, evict>> (only pc and ej update);
+      \*       this branch is fully discharged here along the same lines as
+      \*       `strIns', `tryEv', etc.
+      <3>. USE <2>2 DEF nestedIns
+      <3>A. CASE compare(lo[self], mod(ei[self] + 1, K),
+                          table[mod(ej[self], K)], mod(ej[self], K)) <= -1
+        \* THEN: genuinely deep -- copies a cell of `table'.
+        OMITTED
+      <3>B. CASE ~(compare(lo[self], mod(ei[self] + 1, K),
+                            table[mod(ej[self], K)], mod(ej[self], K)) <= -1)
+        \* ELSE: UNCHANGED <<table, evict>>, pc'[self] = "set".
+        <4>1. UNCHANGED <<table, evict>>
+          BY <3>B
+        <4>2. pc'[self] = "set"
+          BY <3>B
+        <4>3. TableType'
+          BY <4>1
+        <4>4. FindOrPut' => NoDupsTable'
+          BY <4>1
+        <4>5. \A s2 \in ProcSet :
+                pc'[s2] \in {"rtrn", "endEv"} => NoDupsTable'
+          <5>. SUFFICES ASSUME NEW s2 \in ProcSet,
+                                pc'[s2] \in {"rtrn", "endEv"}
+                        PROVE  NoDupsTable'
+            OBVIOUS
+          <5>1. CASE s2 = self
+            <6>1. pc'[s2] = "set"
+              BY <4>2, <5>1
+            <6>. QED  BY <6>1
+          <5>2. CASE s2 # self
+            <6>1. pc'[s2] = pc[s2]
+              BY <5>2
+            <6>. QED  BY <6>1, <4>1
+          <5>. QED  BY <5>1, <5>2
+        <4>. QED  BY <4>3, <4>4, <4>5
+      <3>. QED  BY <3>A, <3>B
     <2>3. CASE set(self)
       \* set: table' = [table EXCEPT ![mod(ej+1, K)] = lo[self]].  See (b).
       OMITTED
