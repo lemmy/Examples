@@ -1870,6 +1870,197 @@ LEMMA EvictExclusiveInd ==
   <1>. QED  BY <1>1, <1>2, <1>3, <1>4 DEF Next
 
 (***************************************************************************)
+(* `LoType': conditional typing of `lo' at the places where the Evict      *)
+(* procedure is about to write it into the `table'.  Specifically, at      *)
+(* every writer whose `pc' is in `{"nestedIns", "set"}', `lo[self]' is     *)
+(* a `TableValues' element.                                                *)
+(*                                                                         *)
+(* Used to discharge the `set' case of `DupInvNext' (the value written     *)
+(* into `table[mod(ej+1, K)]' is `lo[self]', which must be in              *)
+(* `TableValues' for `TableType'' to hold).                                *)
+(***************************************************************************)
+LoType ==
+  \A self \in ProcSet :
+    pc[self] \in {"nestedIns", "set"} => lo[self] \in TableValues
+
+LEMMA InitLoType == Init => LoType
+  <1>. SUFFICES ASSUME Init  PROVE LoType
+    OBVIOUS
+  <1>1. \A self \in ProcSet : pc[self] = "pick"
+    BY ProcSetIsWriter DEF Init, ProcSet
+  <1>2. \A self \in ProcSet : pc[self] \notin {"nestedIns", "set"}
+    BY <1>1
+  <1>. QED  BY <1>2 DEF LoType
+
+LEMMA LoTypeInd ==
+  Inv /\ StackOK /\ EiType /\ DupInv /\ LoType /\ [Next]_vars => LoType'
+  <1>. SUFFICES ASSUME Inv, StackOK, EiType, DupInv, LoType, [Next]_vars
+                PROVE  LoType'
+    OBVIOUS
+  <1>. USE DEF LoType, EiType, DupInv, TableType, TableValues,
+              StackOK, EvictLabels, WriterLabels, ProcSet,
+              Inv, PcRangeOK, PcRange
+  <1>1. CASE UNCHANGED vars
+    BY <1>1 DEF vars
+  <1>2. ASSUME NEW self \in ProcSet, Evict(self)
+        PROVE  LoType'
+    <2>. USE <1>2 DEF Evict
+    <2>. SUFFICES ASSUME NEW s2 \in ProcSet,
+                          pc'[s2] \in {"nestedIns", "set"}
+                  PROVE  lo'[s2] \in TableValues
+      BY DEF LoType
+    <2>1. CASE strIns(self)
+      \* strIns: ei[self] <= K+L -> pc'[self] = "nestedIns",
+      \*   lo'[self] = table[mod(ei[self] + 1, K)] \in TableValues.
+      \* Otherwise -> pc'[self] = "flush", lo UNCHANGED.
+      <3>. USE <2>1 DEF strIns
+      <3>1. CASE s2 = self
+        <4>1. CASE ei[self] <= K+L
+          <5>1. lo'[self] = table[mod(ei[self] + 1, K)]
+            BY <4>1
+          \* pin mod(ei[self] + 1, K) \in 1..K
+          <5>2. ei[self] \in Nat  OBVIOUS
+          <5>3. ei[self] + 1 \in Nat  BY <5>2
+          <5>4. K \in Nat \ {0}  BY OAAssumption
+          <5>5. (ei[self] + 1) % K \in 0..(K-1)
+            BY <5>3, <5>4
+          <5>6. mod(ei[self] + 1, K) \in 1..K
+            BY <5>4, <5>5 DEF mod
+          <5>7. table[mod(ei[self] + 1, K)] \in TableValues
+            BY <5>6
+          <5>. QED  BY <3>1, <5>1, <5>7
+        <4>2. CASE ~(ei[self] <= K+L)
+          \* pc'[self] = "flush", s2 = self means pc'[s2] = "flush",
+          \* which is not in {"nestedIns", "set"}.  Contradiction.
+          <5>1. pc'[self] = "flush"  BY <4>2
+          <5>2. pc'[self] \notin {"nestedIns", "set"}
+            BY <5>1
+          <5>. QED  BY <3>1, <5>2
+        <4>. QED  BY <4>1, <4>2
+      <3>2. CASE s2 # self
+        <4>1. pc'[s2] = pc[s2]  BY <3>2
+        <4>2. pc[s2] \in {"nestedIns", "set"}  BY <4>1
+        <4>3. lo'[s2] = lo[s2]
+          \* Both branches of strIns only write lo at self, not s2.
+          BY <3>2
+        <4>4. lo[s2] \in TableValues
+          BY <4>2
+        <4>. QED  BY <4>3, <4>4
+      <3>. QED  BY <3>1, <3>2
+    <2>2. CASE nestedIns(self)
+      \* nestedIns leaves lo UNCHANGED.  Any s2 with pc'[s2] \in
+      \* {"nestedIns", "set"} either has pc[s2] \in {"nestedIns",
+      \* "set"} pre-state (so lo[s2] \in TableValues by LoType) and
+      \* lo'[s2] = lo[s2]; or was at pc[s2] = "nestedIns" and stayed
+      \* in the set.
+      <3>. USE <2>2 DEF nestedIns
+      <3>1. lo' = lo  OBVIOUS
+      <3>2. CASE s2 = self
+        \* pc'[self] \in {"nestedIns", "set"}; pc[self] = "nestedIns"
+        \* \in {"nestedIns", "set"}; LoType gives lo[self] \in TableValues.
+        <4>1. pc[self] = "nestedIns"  OBVIOUS
+        <4>2. lo[self] \in TableValues  BY <4>1
+        <4>3. lo'[self] = lo[self]  BY <3>1
+        <4>. QED  BY <3>2, <4>2, <4>3
+      <3>3. CASE s2 # self
+        <4>1. pc'[s2] = pc[s2]  BY <3>3
+        <4>2. pc[s2] \in {"nestedIns", "set"}  BY <4>1
+        <4>3. lo'[s2] = lo[s2]  BY <3>1
+        <4>. QED  BY <4>2, <4>3
+      <3>. QED  BY <3>2, <3>3
+    <2>3. CASE set(self)
+      \* set: pc'[self] = "strIns" \notin {"nestedIns", "set"}.
+      \* For s2 # self, pc'[s2] = pc[s2] and lo'[s2] = lo[s2] (lo
+      \* UNCHANGED by set).
+      <3>. USE <2>3 DEF set
+      <3>1. pc'[self] = "strIns"  OBVIOUS
+      <3>2. lo' = lo  OBVIOUS
+      <3>3. CASE s2 = self
+        <4>1. pc'[self] \notin {"nestedIns", "set"}  BY <3>1
+        <4>. QED  BY <3>3, <4>1
+      <3>4. CASE s2 # self
+        <4>1. pc'[s2] = pc[s2]  BY <3>4
+        <4>2. pc[s2] \in {"nestedIns", "set"}  BY <4>1
+        <4>3. lo'[s2] = lo[s2]  BY <3>2
+        <4>. QED  BY <4>2, <4>3
+      <3>. QED  BY <3>3, <3>4
+    <2>4. CASE flush(self)
+      \* flush: pc'[self] \in {"flush", "rtrn"}, neither in
+      \* {"nestedIns", "set"}.  For s2 # self, pc and lo unchanged
+      \* at s2.
+      <3>. USE <2>4 DEF flush
+      <3>1. pc'[self] \in {"flush", "rtrn"}  OBVIOUS
+      <3>2. pc'[self] \notin {"nestedIns", "set"}  BY <3>1
+      <3>3. CASE s2 = self
+        <4>. QED  BY <3>3, <3>2
+      <3>4. CASE s2 # self
+        <4>1. pc'[s2] = pc[s2]  BY <3>4
+        <4>2. pc[s2] \in {"nestedIns", "set"}  BY <4>1
+        <4>3. lo'[s2] = lo[s2]  BY <3>4
+        <4>4. lo[s2] \in TableValues  BY <4>2
+        <4>. QED  BY <4>3, <4>4
+      <3>. QED  BY <3>3, <3>4
+    <2>5. CASE rtrn(self)
+      \* rtrn: pc'[self] = "endEv" (by StackOK), not in {"nestedIns",
+      \* "set"}.  For s2 # self, unchanged.
+      <3>. USE <2>5 DEF rtrn
+      <3>1. pc[self] = "rtrn"  OBVIOUS
+      <3>2. stack[self] # <<>>  BY <3>1
+      <3>3. Head(stack[self]).pc = "endEv"  BY <3>2
+      <3>4. pc'[self] = "endEv"  BY <3>3
+      <3>5. pc'[self] \notin {"nestedIns", "set"}  BY <3>4
+      <3>6. CASE s2 = self
+        <4>. QED  BY <3>6, <3>5
+      <3>7. CASE s2 # self
+        <4>1. pc'[s2] = pc[s2]  BY <3>7
+        <4>2. pc[s2] \in {"nestedIns", "set"}  BY <4>1
+        <4>3. lo'[s2] = lo[s2]  BY <3>7
+        <4>4. lo[s2] \in TableValues  BY <4>2
+        <4>. QED  BY <4>3, <4>4
+      <3>. QED  BY <3>6, <3>7
+    <2>. QED  BY <2>1, <2>2, <2>3, <2>4, <2>5
+  <1>3. ASSUME NEW self \in Writer, p(self)
+        PROVE  LoType'
+    \* p-actions live in WriterLabels, never enter {"nestedIns", "set"},
+    \* and (with one exception) leave `lo' UNCHANGED.  waitIns writes
+    \* lo'[self] = 0 but pc'[self] = "strIns", still not in
+    \* {"nestedIns", "set"}.  For any s2 with pc'[s2] \in {"nestedIns",
+    \* "set"}, s2 # self (since pc'[self] \notin that set) so
+    \* lo'[s2] = lo[s2] and we close by LoType pre-state.
+    <2>. USE <1>3, ProcSetIsWriter DEF p
+    <2>. SUFFICES ASSUME NEW s2 \in ProcSet,
+                          pc'[s2] \in {"nestedIns", "set"}
+                  PROVE  lo'[s2] \in TableValues
+      BY DEF LoType
+    <2>1. CASE pick(self)      BY <2>1 DEF pick
+    <2>2. CASE put(self)       BY <2>2 DEF put
+    <2>3. CASE waitEv(self)    BY <2>3 DEF waitEv
+    <2>4. CASE endWEv(self)    BY <2>4 DEF endWEv
+    <2>5. CASE chkSnc(self)    BY <2>5 DEF chkSnc
+    <2>6. CASE cntns(self)     BY <2>6 DEF cntns
+    <2>7. CASE onSnc(self)     BY <2>7 DEF onSnc
+    <2>8. CASE isMth(self)     BY <2>8 DEF isMth
+    <2>9. CASE insrt(self)     BY <2>9 DEF insrt
+    <2>10. CASE cas(self)      BY <2>10 DEF cas
+    <2>11. CASE tryEv(self)    BY <2>11 DEF tryEv
+    <2>12. CASE waitIns(self)
+      \* waitIns writes lo'[self] = 0 and pc'[self] = "strIns".
+      <3>. USE <2>12 DEF waitIns
+      <3>1. pc'[self] = "strIns"  OBVIOUS
+      <3>2. pc'[self] \notin {"nestedIns", "set"}  BY <3>1
+      <3>3. s2 # self  BY <3>2
+      <3>4. pc'[s2] = pc[s2]  BY <3>3
+      <3>5. lo'[s2] = lo[s2]  BY <3>3
+      <3>6. pc[s2] \in {"nestedIns", "set"}  BY <3>4
+      <3>. QED  BY <3>5, <3>6
+    <2>13. CASE endEv(self)    BY <2>13 DEF endEv
+    <2>. QED  BY <2>1, <2>2, <2>3, <2>4, <2>5, <2>6, <2>7,
+                  <2>8, <2>9, <2>10, <2>11, <2>12, <2>13
+  <1>4. CASE Terminating
+    BY <1>4 DEF Terminating, vars
+  <1>. QED  BY <1>1, <1>2, <1>3, <1>4 DEF Next
+
+(***************************************************************************)
 (* Inductive step.                                                         *)
 (*                                                                         *)
 (* Most writer disjuncts leave `table' and `evict' UNCHANGED and move      *)
@@ -1905,11 +2096,11 @@ LEMMA EvictExclusiveInd ==
 (* = "flush", which requires the sort-permutation / insertion-sort-body    *)
 (* invariant -- see (b)/(c).                                               *)
 (***************************************************************************)
-LEMMA DupInvNext == Inv /\ ResultType /\ EiType /\ EjType
+LEMMA DupInvNext == Inv /\ ResultType /\ EiType /\ EjType /\ LoType
                     /\ EvictExclusive /\ DupInv
                     /\ [Next]_vars => DupInv'
-  <1>. SUFFICES ASSUME Inv, ResultType, EiType, EjType, EvictExclusive,
-                       DupInv, [Next]_vars
+  <1>. SUFFICES ASSUME Inv, ResultType, EiType, EjType, LoType,
+                       EvictExclusive, DupInv, [Next]_vars
                 PROVE  DupInv'
     OBVIOUS
   <1>. USE DEF DupInv, TableType, NoDupsTable, FindOrPut, TableValues,
@@ -2083,7 +2274,7 @@ LEMMA DupInvNext == Inv /\ ResultType /\ EiType /\ EjType
       \* OMITTED sub-step here; all the other set-case reasoning is
       \* discharged.
       <3>. USE <2>3, ProcSetIsWriter
-           DEF set, EjType, EvictExclusive, EvictUnion, EvictLabels
+           DEF set, EjType, LoType, EvictExclusive, EvictUnion, EvictLabels
       <3>. DEFINE pos == mod(ej[self] + 1, K)
       <3>1. table' = [table EXCEPT ![pos] = lo[self]]
         OBVIOUS
@@ -2100,10 +2291,10 @@ LEMMA DupInvNext == Inv /\ ResultType /\ EiType /\ EjType
       \* evict = TRUE via EvictExclusive at self.
       <3>11. evict = TRUE  BY <3>4
       <3>12. evict' = TRUE  BY <3>2, <3>11
-      \* TableType': reduces to `lo[self] \in TableValues'.
+      \* TableType': the value being written is `lo[self]'; at pc[self]
+      \* = "set", `LoType' gives `lo[self] \in TableValues'.
       <3>13. lo[self] \in TableValues
-        \* Requires a conditional LoType invariant (see doc-comment).
-        OMITTED
+        BY <3>3
       <3>14. TableType'
         <4>. SUFFICES ASSUME NEW j \in 1..K
                       PROVE  table'[j] \in TableValues
@@ -2773,15 +2964,15 @@ LEMMA DupInvImpliesDuplicates == DupInv => Duplicates
 (***************************************************************************)
 THEOREM DuplicatesSafety == Spec => []Duplicates
   <1>1. Spec => [](Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
-                   /\ EvictExclusive /\ DupInv)
+                   /\ LoType /\ EvictExclusive /\ DupInv)
     <2>1. Init => Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
-                    /\ EvictExclusive /\ DupInv
+                    /\ LoType /\ EvictExclusive /\ DupInv
       BY InitInv, InitStackOK, InitResultType, InitEiType, InitEjType,
-         InitEvictExclusive, InitDupInv
+         InitLoType, InitEvictExclusive, InitDupInv
     <2>2. (Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
-             /\ EvictExclusive /\ DupInv) /\ [Next]_vars
+             /\ LoType /\ EvictExclusive /\ DupInv) /\ [Next]_vars
             => (Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
-                  /\ EvictExclusive /\ DupInv)'
+                  /\ LoType /\ EvictExclusive /\ DupInv)'
       <3>1. Inv /\ StackOK /\ [Next]_vars => Inv'
         BY InvNext
       <3>2. Inv /\ StackOK /\ [Next]_vars => StackOK'
@@ -2792,15 +2983,18 @@ THEOREM DuplicatesSafety == Spec => []Duplicates
         BY EiTypeInd
       <3>5. StackOK /\ EiType /\ EjType /\ [Next]_vars => EjType'
         BY EjTypeInd
-      <3>6. Inv /\ StackOK /\ EvictExclusive /\ [Next]_vars => EvictExclusive'
+      <3>6. Inv /\ StackOK /\ EiType /\ DupInv /\ LoType /\ [Next]_vars
+              => LoType'
+        BY LoTypeInd
+      <3>7. Inv /\ StackOK /\ EvictExclusive /\ [Next]_vars => EvictExclusive'
         BY EvictExclusiveInd
-      <3>7. Inv /\ ResultType /\ EiType /\ EjType /\ EvictExclusive
-              /\ DupInv /\ [Next]_vars => DupInv'
+      <3>8. Inv /\ ResultType /\ EiType /\ EjType /\ LoType
+              /\ EvictExclusive /\ DupInv /\ [Next]_vars => DupInv'
         BY DupInvNext
-      <3>. QED  BY <3>1, <3>2, <3>3, <3>4, <3>5, <3>6, <3>7
+      <3>. QED  BY <3>1, <3>2, <3>3, <3>4, <3>5, <3>6, <3>7, <3>8
     <2>. QED  BY <2>1, <2>2, PTL DEF Spec
   <1>2. (Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
-           /\ EvictExclusive /\ DupInv) => Duplicates
+           /\ LoType /\ EvictExclusive /\ DupInv) => Duplicates
     BY DupInvImpliesDuplicates
   <1>. QED  BY <1>1, <1>2, PTL
 
@@ -3615,16 +3809,16 @@ THEOREM SortedSafety == Spec => []Sorted
   \* flush outer-else, cas successful), but that dependency is no worse
   \* than the OMITTED that previously lived directly in `SortedInvNext'.
   <1>1. Spec => [](Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
-                   /\ EvictExclusive /\ DupInv /\ SortedInv)
+                   /\ LoType /\ EvictExclusive /\ DupInv /\ SortedInv)
     <2>1. Init => Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
-                    /\ EvictExclusive /\ DupInv /\ SortedInv
+                    /\ LoType /\ EvictExclusive /\ DupInv /\ SortedInv
       BY InitInv, InitStackOK, InitResultType, InitEiType, InitEjType,
-         InitEvictExclusive, InitDupInv, InitSortedInv
+         InitLoType, InitEvictExclusive, InitDupInv, InitSortedInv
     <2>2. (Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
-             /\ EvictExclusive /\ DupInv /\ SortedInv)
+             /\ LoType /\ EvictExclusive /\ DupInv /\ SortedInv)
             /\ [Next]_vars
           => (Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
-                /\ EvictExclusive /\ DupInv /\ SortedInv)'
+                /\ LoType /\ EvictExclusive /\ DupInv /\ SortedInv)'
       <3>1. Inv /\ StackOK /\ [Next]_vars => Inv'
         BY InvNext
       <3>2. Inv /\ StackOK /\ [Next]_vars => StackOK'
@@ -3635,14 +3829,17 @@ THEOREM SortedSafety == Spec => []Sorted
         BY EiTypeInd
       <3>5. StackOK /\ EiType /\ EjType /\ [Next]_vars => EjType'
         BY EjTypeInd
-      <3>6. Inv /\ StackOK /\ EvictExclusive /\ [Next]_vars => EvictExclusive'
+      <3>6. Inv /\ StackOK /\ EiType /\ DupInv /\ LoType /\ [Next]_vars
+              => LoType'
+        BY LoTypeInd
+      <3>7. Inv /\ StackOK /\ EvictExclusive /\ [Next]_vars => EvictExclusive'
         BY EvictExclusiveInd
-      <3>7. Inv /\ ResultType /\ EiType /\ EjType /\ EvictExclusive
-              /\ DupInv /\ [Next]_vars => DupInv'
+      <3>8. Inv /\ ResultType /\ EiType /\ EjType /\ LoType
+              /\ EvictExclusive /\ DupInv /\ [Next]_vars => DupInv'
         BY DupInvNext
-      <3>8. EiType /\ DupInv /\ SortedInv /\ [Next]_vars => SortedInv'
+      <3>9. EiType /\ DupInv /\ SortedInv /\ [Next]_vars => SortedInv'
         BY SortedInvNext
-      <3>. QED  BY <3>1, <3>2, <3>3, <3>4, <3>5, <3>6, <3>7, <3>8
+      <3>. QED  BY <3>1, <3>2, <3>3, <3>4, <3>5, <3>6, <3>7, <3>8, <3>9
     <2>. QED  BY <2>1, <2>2, PTL DEF Spec
   <1>2. SortedInv => Sorted
     BY SortedInvImpliesSorted
