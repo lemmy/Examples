@@ -1071,387 +1071,6 @@ THEOREM CompleteSafety == Spec => []CompleteAsSafety
 
 (***************************************************************************)
 (*                                                                         *)
-(*  REMAINING SAFETY PROPERTIES (left as OMITTED stubs).                   *)
-(*                                                                         *)
-(* The other top-level safety properties of OpenAddressing are genuine     *)
-(* deep results about the algorithm's data structure.  They are stated     *)
-(* below for completeness; their proofs would require strengthened         *)
-(* invariants that we sketch in the comments but do not discharge here.    *)
-(*                                                                         *)
-(***************************************************************************)
-
-(***************************************************************************)
-(*                                                                         *)
-(*  SORTEDNESS OF THE EXTERNAL STORAGE.                                    *)
-(*                                                                         *)
-(*  We prove `Spec => []Sorted' via a strengthened invariant `SortedInv'   *)
-(*  carrying both well-typing (`external, newexternal \in Seq(fps)') and   *)
-(*  the strict-ascending property of the underlying sequences.  From       *)
-(*  `SortedInv' we recover the stated `Sorted' property by observing that  *)
-(*  no element of either sequence equals `empty' (`empty \notin fps' is    *)
-(*  the spec's top-level assumption), so `SelectSeq(seq, e # empty) = seq' *)
-(*  and the strict-ascending check on `seq' becomes the body of            *)
-(*  `isSorted(seq)'.                                                       *)
-(*                                                                         *)
-(*  The genuinely deep sub-results are sequence-theoretic facts about      *)
-(*  `SelectSeq', concatenation, and `Append'; we state them as lemmas      *)
-(*  with `OMITTED' proofs.                                                 *)
-(*                                                                         *)
-(***************************************************************************)
-
-(***************************************************************************)
-(* Strict-ascending predicate on a sequence (of integers).                 *)
-(***************************************************************************)
-StrAsc(s) == \A i \in 1..(Len(s) - 1) : s[i] < s[i+1]
-
-(***************************************************************************)
-(* The strengthened invariant.                                             *)
-(***************************************************************************)
-SortedInv ==
-  /\ external    \in Seq(fps)
-  /\ newexternal \in Seq(fps)
-  /\ StrAsc(external)
-  /\ StrAsc(newexternal)
-
-(***************************************************************************)
-(* Sequence-theoretic helper lemmas.  These are general-purpose facts     *)
-(* about `SelectSeq', `\o', and `Append' that are not part of the         *)
-(* TLAPS standard library and would require recursive function-level     *)
-(* induction to discharge.  We state them here and leave the proofs as    *)
-(* `OMITTED'.                                                              *)
-(***************************************************************************)
-
-\* SelectSeq filtering on a sequence of fps with `e # empty' is the       
-\* identity (because `empty \notin fps').                                  
-LEMMA SelectSeqIdentityOnFps ==
-  ASSUME NEW s \in Seq(fps)
-  PROVE  SelectSeq(s, LAMBDA e : e # empty) = s
-  OMITTED
-
-\* SelectSeq of a sequence in Seq(fps) is again in Seq(fps).
-LEMMA SelectSeqInSeqFps ==
-  ASSUME NEW s \in Seq(fps), NEW Test(_)
-  PROVE  SelectSeq(s, Test) \in Seq(fps)
-  OMITTED
-
-\* SelectSeq preserves strict-ascending order.
-LEMMA SelectSeqPreservesStrAsc ==
-  ASSUME NEW s \in Seq(fps), StrAsc(s), NEW Test(_)
-  PROVE  StrAsc(SelectSeq(s, Test))
-  OMITTED
-
-\* Range-bound for SelectSeq under a threshold predicate.
-LEMMA SelectSeqStrictlyGreater ==
-  ASSUME NEW s \in Seq(fps), NEW lower \in Int
-  PROVE  \A i \in 1..Len(SelectSeq(s, LAMBDA p : p > lower)) :
-            SelectSeq(s, LAMBDA p : p > lower)[i] > lower
-  OMITTED
-
-\* Range-bound for SelectSeq under a window predicate.
-LEMMA SelectSeqInWindow ==
-  ASSUME NEW s \in Seq(fps), NEW lower \in Int, NEW upper \in Int
-  PROVE  \A i \in 1..Len(SelectSeq(s, LAMBDA p : p < upper /\ p > lower)) :
-           /\ SelectSeq(s, LAMBDA p : p < upper /\ p > lower)[i] > lower
-           /\ SelectSeq(s, LAMBDA p : p < upper /\ p > lower)[i] < upper
-  OMITTED
-
-\* Concatenation preserves strict-ascending order when the boundary holds.
-LEMMA ConcatStrAsc ==
-  ASSUME NEW s1 \in Seq(Int), NEW s2 \in Seq(Int),
-         StrAsc(s1), StrAsc(s2),
-         s1 = <<>> \/ s2 = <<>> \/ s1[Len(s1)] < s2[1]
-  PROVE  StrAsc(s1 \o s2)
-  OMITTED
-
-\* Append preserves strict-ascending order when the appended element is
-\* strictly greater than the current last element (or the sequence is
-\* empty).
-LEMMA AppendStrAsc ==
-  ASSUME NEW s \in Seq(Int), NEW elt \in Int,
-         StrAsc(s),
-         s = <<>> \/ s[Len(s)] < elt
-  PROVE  StrAsc(Append(s, elt))
-  OMITTED
-
-\* `SelectSeq' on the empty sequence is the empty sequence (for any
-\* predicate).  This one is easy enough to discharge from the standard
-\* definition of `SelectSeq' in the `Sequences' module.
-LEMMA SelectSeqEmpty ==
-  ASSUME NEW Test(_)
-  PROVE  SelectSeq(<<>>, Test) = <<>>
-  BY DEF SelectSeq
-
-\* `largestElem' bounds: for any sequence in `Seq(fps)', the largest       
-\* element is either `0' (when the sequence is empty) or `s[Len(s)]'.       
-LEMMA LargestElemDef ==
-  ASSUME NEW s \in Seq(fps)
-  PROVE  largestElem(s) = IF s = <<>> THEN 0 ELSE s[Len(s)]
-  BY DEF largestElem, last
-
-(***************************************************************************)
-(* Init implies SortedInv.                                                 *)
-(***************************************************************************)
-LEMMA InitSortedInv == Init => SortedInv
-  <1>. SUFFICES ASSUME Init  PROVE SortedInv
-    OBVIOUS
-  <1>1. external = <<>>  /\  newexternal = <<>>
-    BY DEF Init
-  <1>2. <<>> \in Seq(fps)
-    BY EmptySeq
-  <1>3. external \in Seq(fps)
-    BY <1>1, <1>2
-  <1>4. newexternal \in Seq(fps)
-    BY <1>1, <1>2
-  <1>5. StrAsc(external)
-    \* Len(<<>>) = 0, so the universal is over 1..(-1) = {} -- vacuous.
-    <2>1. Len(external) = 0
-      BY <1>1, EmptySeq
-    <2>2. 1..(Len(external) - 1) = {}
-      BY <2>1
-    <2>. QED  BY <2>2 DEF StrAsc
-  <1>6. StrAsc(newexternal)
-    <2>1. Len(newexternal) = 0
-      BY <1>1, EmptySeq
-    <2>2. 1..(Len(newexternal) - 1) = {}
-      BY <2>1
-    <2>. QED  BY <2>2 DEF StrAsc
-  <1>. QED  BY <1>3, <1>4, <1>5, <1>6 DEF SortedInv
-
-(***************************************************************************)
-(* Inductive step for SortedInv.                                           *)
-(*                                                                         *)
-(* Only the `flush' action of the `Evict' procedure mutates `external' or  *)
-(* `newexternal'.  All writer-body actions and the other Evict labels      *)
-(* leave both sequences UNCHANGED, in which case `SortedInv'' follows      *)
-(* trivially from `SortedInv'.                                             *)
-(*                                                                         *)
-(* The `flush' action splits into three cases:                             *)
-(*   (a) `ei[self] <= K+L', inner-if FALSE: UNCHANGED both sequences.      *)
-(*   (b) `ei[self] <= K+L', inner-if TRUE: external UNCHANGED;             *)
-(*       newexternal' = Append(newexternal \o subSeqSmaller(...), lo).     *)
-(*       This case requires the SelectSeq + Concat + Append helper lemmas. *)
-(*   (c) `ei[self] >  K+L': newexternal' = <<>>;                           *)
-(*       external'    = newexternal \o subSeqLarger(external, newexternal).*)
-(*       Requires Concat + SelectSeq helpers.                              *)
-(*                                                                         *)
-(* Case (c) -- the `outer-else' -- is fully discharged here from the       *)
-(* generic SelectSeq / Concat / Append helper lemmas plus TLAPS'           *)
-(* `SequenceTheorems!ConcatProperties' and `LargestElemDef' /              *)
-(* `ElementOfSeq' to extract `largestElem(newexternal) = newexternal[Len]' *)
-(* as a bona fide integer.                                                 *)
-(*                                                                         *)
-(* Case (b) -- the `inner-then' -- remains OMITTED.  It would need         *)
-(* `lo'[self] \in fps', which decomposes into two TableType-style          *)
-(* strengthenings that are not currently carried by `SortedInv':           *)
-(*                                                                         *)
-(*   (i)  `table[mod(ei[self], K)] \in fps \cup NegFps \cup {empty}'       *)
-(*        (the classic `TableType' invariant, stated separately in the     *)
-(*        DupInv block below).  Combined with the CASE's `lo'[self] #      *)
-(*        empty' gives `lo'[self] \in fps \cup NegFps'.                    *)
-(*                                                                         *)
-(*   (ii) Positivity: `lo'[self] > largestElem(newexternal) >= 0',         *)
-(*        so `lo'[self] > 0' and hence (from (i)) `lo'[self] \in fps'.     *)
-(*                                                                         *)
-(* Discharging (b) therefore requires extending `SortedInv' (or            *)
-(* strengthening the inductive hypothesis of `SortedInvNext') with         *)
-(* `TableType' plus an auxiliary `lo[self] \in TableValues \cup {0}'       *)
-(* invariant -- a sizeable refactor we have not taken on here.             *)
-(***************************************************************************)
-LEMMA SortedInvNext == SortedInv /\ [Next]_vars => SortedInv'
-  <1>. SUFFICES ASSUME SortedInv, [Next]_vars  PROVE SortedInv'
-    OBVIOUS
-  <1>. USE DEF SortedInv, StrAsc
-  <1>1. CASE UNCHANGED vars
-    BY <1>1 DEF vars
-  <1>2. ASSUME NEW self \in Writer, p(self)
-        PROVE  SortedInv'
-    \* Writer body: external and newexternal are UNCHANGED in every disjunct.
-    BY <1>2 DEF p, pick, put, waitEv, endWEv, chkSnc, cntns, onSnc, insrt,
-                isMth, cas, tryEv, waitIns, endEv
-  <1>3. ASSUME NEW self \in ProcSet, Evict(self)
-        PROVE  SortedInv'
-    <2>1. CASE strIns(self)
-      BY <2>1 DEF strIns
-    <2>2. CASE nestedIns(self)
-      BY <2>2 DEF nestedIns
-    <2>3. CASE set(self)
-      BY <2>3 DEF set
-    <2>4. CASE rtrn(self)
-      BY <2>4 DEF rtrn
-    <2>5. CASE flush(self)
-      \* The two outer cases are split by the IF condition (`ei[self] <= K+L'),
-      \* using excluded middle so we do not need a typing invariant for `ei'.
-      \* The genuinely deep sub-cases are discharged via the OMITTED helper
-      \* lemmas above.
-      <3>. USE <2>5 DEF flush
-      <3>1. CASE ~(ei[self] <= K+L)
-        \* Outer-else of the IF: external' = newexternal \o subSeqLarger(...);
-        \* newexternal' = <<>>.
-        <4>1. external' = newexternal \o subSeqLarger(external, newexternal)
-          BY <3>1
-        <4>2. newexternal' = <<>>
-          BY <3>1
-        <4>3. newexternal' \in Seq(fps)  /\  StrAsc(newexternal')
-          <5>1. <<>> \in Seq(fps)  BY EmptySeq
-          <5>2. Len(newexternal') = 0  BY <4>2, EmptySeq
-          <5>3. 1..(Len(newexternal') - 1) = {}  BY <5>2
-          <5>. QED  BY <4>2, <5>1, <5>3
-        <4>4. external' \in Seq(fps)  /\  StrAsc(external')
-          \* Let `sl == subSeqLarger(external, newexternal)'.  Two cases:
-          \*
-          \*  - newexternal = <<>>: then `sl = external', so external' =
-          \*    <<>> \o external = external, which inherits Seq(fps) and
-          \*    StrAsc directly from SortedInv.
-          \*
-          \*  - newexternal # <<>>: then `sl = SelectSeq(external,
-          \*    LAMBDA p: p > largestElem(newexternal))'.  SelectSeqInSeqFps
-          \*    and SelectSeqPreservesStrAsc (both generic sequence lemmas)
-          \*    give `sl \in Seq(fps)' and `StrAsc(sl)'.  ConcatProperties
-          \*    (TLAPS standard) then gives external' \in Seq(fps).  For
-          \*    the strict-ascending property, if `sl = <<>>' we have
-          \*    external' = newexternal.  Otherwise
-          \*    `sl[1] > largestElem(newexternal) = newexternal[Len(newexternal)]'
-          \*    (SelectSeqStrictlyGreater + LargestElemDef), so ConcatStrAsc's
-          \*    boundary condition holds.
-          <5>. DEFINE sl == subSeqLarger(external, newexternal)
-          <5>0. external' = newexternal \o sl
-            BY <4>1
-          <5>a. fps \subseteq Int
-            <6>1. fps \subseteq Nat \ {0}  BY OAAssumption
-            <6>. QED  BY <6>1
-          <5>b. newexternal \in Seq(Int)
-            BY <5>a, SeqMonotonic
-          <5>1. CASE newexternal = <<>>
-            <6>1. sl = external
-              BY <5>1 DEF subSeqLarger
-            <6>2. external' = <<>> \o external
-              BY <5>0, <5>1, <6>1
-            <6>3. external' = external
-              BY <6>2, ConcatEmptySeq
-            <6>. QED  BY <6>3
-          <5>2. CASE newexternal # <<>>
-            <6>1. sl = SelectSeq(external, LAMBDA p : p > largestElem(newexternal))
-              BY <5>2 DEF subSeqLarger
-            <6>2. largestElem(newexternal) = newexternal[Len(newexternal)]
-              <7>1. largestElem(newexternal) =
-                      IF newexternal = <<>>
-                         THEN 0
-                         ELSE newexternal[Len(newexternal)]
-                BY LargestElemDef
-              <7>. QED  BY <5>2, <7>1
-            <6>3. newexternal # <<>> /\ Len(newexternal) \in Nat \ {0}
-              <7>1. Len(newexternal) \in Nat  BY LenProperties
-              <7>2. Len(newexternal) # 0  BY <5>2, EmptySeq
-              <7>. QED  BY <5>2, <7>1, <7>2
-            <6>4. Len(newexternal) \in 1..Len(newexternal)
-              BY <6>3
-            <6>5. newexternal[Len(newexternal)] \in fps
-              BY <6>4, ElementOfSeq
-            <6>6. largestElem(newexternal) \in Int
-              <7>1. newexternal[Len(newexternal)] \in Nat
-                BY <6>5, OAAssumption
-              <7>. QED  BY <6>2, <7>1
-            <6>7. sl \in Seq(fps)
-              BY <6>1, SelectSeqInSeqFps
-            <6>8. StrAsc(sl)
-              BY <6>1, SelectSeqPreservesStrAsc
-            <6>9. \A i \in 1..Len(sl) : sl[i] > largestElem(newexternal)
-              BY <6>1, <6>6, SelectSeqStrictlyGreater
-            <6>10. external' \in Seq(fps)
-              BY <5>0, <6>7, ConcatProperties
-            <6>11. StrAsc(external')
-              <7>1. CASE sl = <<>>
-                <8>1. external' = newexternal \o <<>>
-                  BY <5>0, <7>1
-                <8>2. external' = newexternal
-                  BY <8>1, ConcatEmptySeq
-                <8>. QED  BY <8>2
-              <7>2. CASE sl # <<>>
-                <8>1. Len(sl) \in Nat /\ Len(sl) # 0
-                  <9>1. Len(sl) \in Nat  BY <6>7, LenProperties
-                  <9>2. Len(sl) # 0  BY <6>7, <7>2, EmptySeq
-                  <9>. QED  BY <9>1, <9>2
-                <8>2. 1 \in 1..Len(sl)
-                  BY <8>1
-                <8>3. sl[1] > largestElem(newexternal)
-                  BY <6>9, <8>2
-                <8>4. newexternal[Len(newexternal)] < sl[1]
-                  BY <6>2, <6>6, <6>5, OAAssumption, <8>3
-                <8>5. sl \in Seq(Int)
-                  BY <5>a, <6>7, SeqMonotonic
-                <8>. QED
-                  BY <5>0, <5>b, <6>8, <8>4, <8>5, ConcatStrAsc
-              <7>. QED  BY <7>1, <7>2
-            <6>. QED  BY <6>10, <6>11
-          <5>. QED  BY <5>1, <5>2
-        <4>. QED  BY <4>3, <4>4
-      <3>2. CASE ei[self] <= K+L
-        <4>1. external' = external
-          BY <3>2
-        <4>2. CASE ~( lo'[self] # empty
-                    /\ lo'[self] > largestElem(newexternal)
-                    /\ ((ei[self] <= K /\ ~wrapped(lo'[self], ei[self]))
-                        \/ (ei[self] >  K /\  wrapped(lo'[self], ei[self]))))
-          \* Inner-else: both UNCHANGED.
-          <5>1. newexternal' = newexternal
-            BY <3>2, <4>2
-          <5>. QED  BY <4>1, <5>1
-        <4>3. CASE /\ lo'[self] # empty
-                   /\ lo'[self] > largestElem(newexternal)
-                   /\ ((ei[self] <= K /\ ~wrapped(lo'[self], ei[self]))
-                       \/ (ei[self] >  K /\  wrapped(lo'[self], ei[self])))
-          \* Inner-then: external UNCHANGED;
-          \* newexternal' = Append(newexternal \o subSeqSmaller(...), lo'[self]).
-          OMITTED
-        <4>. QED  BY <4>2, <4>3
-      <3>. QED  BY <3>1, <3>2
-    <2>. QED  BY <1>3, <2>1, <2>2, <2>3, <2>4, <2>5 DEF Evict
-  <1>4. CASE Terminating
-    BY <1>4 DEF Terminating, vars
-  <1>. QED  BY <1>1, <1>2, <1>3, <1>4 DEF Next
-
-(***************************************************************************)
-(* SortedInv => Sorted.                                                    *)
-(*                                                                         *)
-(* `Sorted' is `isSorted(external) /\ isSorted(newexternal)' with          *)
-(*                                                                         *)
-(*   isSorted(seq) ==                                                      *)
-(*     LET sub == SelectSeq(seq, LAMBDA e : e # empty)                     *)
-(*     IN  IF Len(sub) < 2 THEN TRUE                                       *)
-(*                          ELSE \A i \in 1..(Len(sub)-1): sub[i] < sub[i+1]*)
-(*                                                                         *)
-(* Since `external, newexternal \in Seq(fps)' and `empty \notin fps' (top  *)
-(* level ASSUME), `SelectSeqIdentityOnFps' gives                           *)
-(*   sub = SelectSeq(seq, LAMBDA e: e # empty) = seq                       *)
-(* and the strict-ascending check reduces to `StrAsc(seq)' which is in     *)
-(* `SortedInv'.                                                            *)
-(***************************************************************************)
-LEMMA SortedInvImpliesSorted == SortedInv => Sorted
-  <1>. SUFFICES ASSUME SortedInv  PROVE Sorted
-    OBVIOUS
-  <1>. USE DEF SortedInv, StrAsc
-  <1>1. SelectSeq(external, LAMBDA e : e # empty) = external
-    BY SelectSeqIdentityOnFps
-  <1>2. SelectSeq(newexternal, LAMBDA e : e # empty) = newexternal
-    BY SelectSeqIdentityOnFps
-  <1>3. isSorted(external)
-    BY <1>1 DEF isSorted
-  <1>4. isSorted(newexternal)
-    BY <1>2 DEF isSorted
-  <1>. QED  BY <1>3, <1>4 DEF Sorted
-
-(***************************************************************************)
-(* Main theorem: Spec => []Sorted.                                         *)
-(***************************************************************************)
-THEOREM SortedSafety == Spec => []Sorted
-  <1>1. Spec => []SortedInv
-    BY InitSortedInv, SortedInvNext, PTL DEF Spec
-  <1>2. SortedInv => Sorted
-    BY SortedInvImpliesSorted
-  <1>. QED  BY <1>1, <1>2, PTL
-
-(***************************************************************************)
-(*                                                                         *)
 (*  NO DUPLICATES IN THE TABLE OUTSIDE OF AN ACTIVE EVICTION.              *)
 (*                                                                         *)
 (*  We prove `Spec => []Duplicates' via a strengthened invariant `DupInv'  *)
@@ -2495,6 +2114,669 @@ THEOREM DuplicatesSafety == Spec => []Duplicates
     <2>. QED  BY <2>1, <2>2, PTL DEF Spec
   <1>2. (Inv /\ StackOK /\ ResultType /\ EiType /\ DupInv) => Duplicates
     BY DupInvImpliesDuplicates
+  <1>. QED  BY <1>1, <1>2, PTL
+
+(***************************************************************************)
+(*                                                                         *)
+(*  REMAINING SAFETY PROPERTIES (left as OMITTED stubs).                   *)
+(*                                                                         *)
+(* The other top-level safety properties of OpenAddressing are genuine     *)
+(* deep results about the algorithm's data structure.  They are stated     *)
+(* below for completeness; their proofs would require strengthened         *)
+(* invariants that we sketch in the comments but do not discharge here.    *)
+(*                                                                         *)
+(***************************************************************************)
+
+(***************************************************************************)
+(*                                                                         *)
+(*  SORTEDNESS OF THE EXTERNAL STORAGE.                                    *)
+(*                                                                         *)
+(*  We prove `Spec => []Sorted' via a strengthened invariant `SortedInv'   *)
+(*  carrying both well-typing (`external, newexternal \in Seq(fps)') and   *)
+(*  the strict-ascending property of the underlying sequences.  From       *)
+(*  `SortedInv' we recover the stated `Sorted' property by observing that  *)
+(*  no element of either sequence equals `empty' (`empty \notin fps' is    *)
+(*  the spec's top-level assumption), so `SelectSeq(seq, e # empty) = seq' *)
+(*  and the strict-ascending check on `seq' becomes the body of            *)
+(*  `isSorted(seq)'.                                                       *)
+(*                                                                         *)
+(*  The genuinely deep sub-results are sequence-theoretic facts about      *)
+(*  `SelectSeq', concatenation, and `Append'; we state them as lemmas      *)
+(*  with `OMITTED' proofs.                                                 *)
+(*                                                                         *)
+(***************************************************************************)
+
+(***************************************************************************)
+(* Strict-ascending predicate on a sequence (of integers).                 *)
+(***************************************************************************)
+StrAsc(s) == \A i \in 1..(Len(s) - 1) : s[i] < s[i+1]
+
+(***************************************************************************)
+(* The strengthened invariant.                                             *)
+(***************************************************************************)
+SortedInv ==
+  /\ external    \in Seq(fps)
+  /\ newexternal \in Seq(fps)
+  /\ StrAsc(external)
+  /\ StrAsc(newexternal)
+
+(***************************************************************************)
+(* Sequence-theoretic helper lemmas.  These are general-purpose facts     *)
+(* about `SelectSeq', `\o', and `Append' that are not part of the         *)
+(* TLAPS standard library and would require recursive function-level     *)
+(* induction to discharge.  We state them here and leave the proofs as    *)
+(* `OMITTED'.                                                              *)
+(***************************************************************************)
+
+\* SelectSeq filtering on a sequence of fps with `e # empty' is the       
+\* identity (because `empty \notin fps').                                  
+LEMMA SelectSeqIdentityOnFps ==
+  ASSUME NEW s \in Seq(fps)
+  PROVE  SelectSeq(s, LAMBDA e : e # empty) = s
+  OMITTED
+
+\* SelectSeq of a sequence in Seq(fps) is again in Seq(fps).
+LEMMA SelectSeqInSeqFps ==
+  ASSUME NEW s \in Seq(fps), NEW Test(_)
+  PROVE  SelectSeq(s, Test) \in Seq(fps)
+  OMITTED
+
+\* SelectSeq preserves strict-ascending order.
+LEMMA SelectSeqPreservesStrAsc ==
+  ASSUME NEW s \in Seq(fps), StrAsc(s), NEW Test(_)
+  PROVE  StrAsc(SelectSeq(s, Test))
+  OMITTED
+
+\* Range-bound for SelectSeq under a threshold predicate.
+LEMMA SelectSeqStrictlyGreater ==
+  ASSUME NEW s \in Seq(fps), NEW lower \in Int
+  PROVE  \A i \in 1..Len(SelectSeq(s, LAMBDA p : p > lower)) :
+            SelectSeq(s, LAMBDA p : p > lower)[i] > lower
+  OMITTED
+
+\* Range-bound for SelectSeq under a window predicate.
+LEMMA SelectSeqInWindow ==
+  ASSUME NEW s \in Seq(fps), NEW lower \in Int, NEW upper \in Int
+  PROVE  \A i \in 1..Len(SelectSeq(s, LAMBDA p : p < upper /\ p > lower)) :
+           /\ SelectSeq(s, LAMBDA p : p < upper /\ p > lower)[i] > lower
+           /\ SelectSeq(s, LAMBDA p : p < upper /\ p > lower)[i] < upper
+  OMITTED
+
+\* Concatenation preserves strict-ascending order when the boundary holds.
+LEMMA ConcatStrAsc ==
+  ASSUME NEW s1 \in Seq(Int), NEW s2 \in Seq(Int),
+         StrAsc(s1), StrAsc(s2),
+         s1 = <<>> \/ s2 = <<>> \/ s1[Len(s1)] < s2[1]
+  PROVE  StrAsc(s1 \o s2)
+  OMITTED
+
+\* Append preserves strict-ascending order when the appended element is
+\* strictly greater than the current last element (or the sequence is
+\* empty).
+LEMMA AppendStrAsc ==
+  ASSUME NEW s \in Seq(Int), NEW elt \in Int,
+         StrAsc(s),
+         s = <<>> \/ s[Len(s)] < elt
+  PROVE  StrAsc(Append(s, elt))
+  OMITTED
+
+\* `SelectSeq' on the empty sequence is the empty sequence (for any
+\* predicate).  This one is easy enough to discharge from the standard
+\* definition of `SelectSeq' in the `Sequences' module.
+LEMMA SelectSeqEmpty ==
+  ASSUME NEW Test(_)
+  PROVE  SelectSeq(<<>>, Test) = <<>>
+  BY DEF SelectSeq
+
+\* `largestElem' bounds: for any sequence in `Seq(fps)', the largest       
+\* element is either `0' (when the sequence is empty) or `s[Len(s)]'.       
+LEMMA LargestElemDef ==
+  ASSUME NEW s \in Seq(fps)
+  PROVE  largestElem(s) = IF s = <<>> THEN 0 ELSE s[Len(s)]
+  BY DEF largestElem, last
+
+(***************************************************************************)
+(* Init implies SortedInv.                                                 *)
+(***************************************************************************)
+LEMMA InitSortedInv == Init => SortedInv
+  <1>. SUFFICES ASSUME Init  PROVE SortedInv
+    OBVIOUS
+  <1>1. external = <<>>  /\  newexternal = <<>>
+    BY DEF Init
+  <1>2. <<>> \in Seq(fps)
+    BY EmptySeq
+  <1>3. external \in Seq(fps)
+    BY <1>1, <1>2
+  <1>4. newexternal \in Seq(fps)
+    BY <1>1, <1>2
+  <1>5. StrAsc(external)
+    \* Len(<<>>) = 0, so the universal is over 1..(-1) = {} -- vacuous.
+    <2>1. Len(external) = 0
+      BY <1>1, EmptySeq
+    <2>2. 1..(Len(external) - 1) = {}
+      BY <2>1
+    <2>. QED  BY <2>2 DEF StrAsc
+  <1>6. StrAsc(newexternal)
+    <2>1. Len(newexternal) = 0
+      BY <1>1, EmptySeq
+    <2>2. 1..(Len(newexternal) - 1) = {}
+      BY <2>1
+    <2>. QED  BY <2>2 DEF StrAsc
+  <1>. QED  BY <1>3, <1>4, <1>5, <1>6 DEF SortedInv
+
+(***************************************************************************)
+(* Inductive step for SortedInv.                                           *)
+(*                                                                         *)
+(* Only the `flush' action of the `Evict' procedure mutates `external' or  *)
+(* `newexternal'.  All writer-body actions and the other Evict labels      *)
+(* leave both sequences UNCHANGED, in which case `SortedInv'' follows      *)
+(* trivially from `SortedInv'.                                             *)
+(*                                                                         *)
+(* The `flush' action splits into three cases:                             *)
+(*   (a) `ei[self] <= K+L', inner-if FALSE: UNCHANGED both sequences.      *)
+(*   (b) `ei[self] <= K+L', inner-if TRUE: external UNCHANGED;             *)
+(*       newexternal' = Append(newexternal \o subSeqSmaller(...), lo).     *)
+(*       This case requires the SelectSeq + Concat + Append helper lemmas. *)
+(*   (c) `ei[self] >  K+L': newexternal' = <<>>;                           *)
+(*       external'    = newexternal \o subSeqLarger(external, newexternal).*)
+(*       Requires Concat + SelectSeq helpers.                              *)
+(*                                                                         *)
+(* Case (c) -- the `outer-else' -- is fully discharged here from the       *)
+(* generic SelectSeq / Concat / Append helper lemmas plus TLAPS'           *)
+(* `SequenceTheorems!ConcatProperties' and `LargestElemDef' /              *)
+(* `ElementOfSeq' to extract `largestElem(newexternal) = newexternal[Len]' *)
+(* as a bona fide integer.                                                 *)
+(*                                                                         *)
+(* Case (b) -- the `inner-then' -- is FULLY DISCHARGED with the help of    *)
+(* the layered invariants `EiType /\ DupInv' (the latter supplies          *)
+(* `TableType').  The proof decomposes `lo'[self] \in fps' into:           *)
+(*                                                                         *)
+(*   (i)  `table[mod(ei[self], K)] \in fps \cup NegFps \cup {empty}':      *)
+(*        `TableType' + `EiType' (for `mod(ei[self], K) \in 1..K').        *)
+(*        Combined with the CASE's `lo'[self] # empty' this gives          *)
+(*        `lo'[self] \in fps \cup NegFps'.                                 *)
+(*                                                                         *)
+(*   (ii) Positivity: `lo'[self] > largestElem(newexternal) >= 0'          *)
+(*        (`largestElem' returns `0' on an empty sequence and an `fps'     *)
+(*        element otherwise, which is strictly positive by OAAssumption).  *)
+(*        Since every element of `NegFps' is strictly negative, we         *)
+(*        exclude `NegFps' and conclude `lo'[self] \in fps'.               *)
+(*                                                                         *)
+(* The remainder of the proof (Seq(fps) and StrAsc for `newexternal'')     *)
+(* follows the same SelectSeq + Concat + Append pattern as (c).            *)
+(***************************************************************************)
+LEMMA SortedInvNext ==
+  EiType /\ DupInv /\ SortedInv /\ [Next]_vars => SortedInv'
+  <1>. SUFFICES ASSUME EiType, DupInv, SortedInv, [Next]_vars
+                PROVE  SortedInv'
+    OBVIOUS
+  <1>. USE DEF SortedInv, StrAsc, EiType,
+              DupInv, TableType, TableValues, NegFps
+  <1>1. CASE UNCHANGED vars
+    BY <1>1 DEF vars
+  <1>2. ASSUME NEW self \in Writer, p(self)
+        PROVE  SortedInv'
+    \* Writer body: external and newexternal are UNCHANGED in every disjunct.
+    BY <1>2 DEF p, pick, put, waitEv, endWEv, chkSnc, cntns, onSnc, insrt,
+                isMth, cas, tryEv, waitIns, endEv
+  <1>3. ASSUME NEW self \in ProcSet, Evict(self)
+        PROVE  SortedInv'
+    <2>1. CASE strIns(self)
+      BY <2>1 DEF strIns
+    <2>2. CASE nestedIns(self)
+      BY <2>2 DEF nestedIns
+    <2>3. CASE set(self)
+      BY <2>3 DEF set
+    <2>4. CASE rtrn(self)
+      BY <2>4 DEF rtrn
+    <2>5. CASE flush(self)
+      \* The two outer cases are split by the IF condition (`ei[self] <= K+L'),
+      \* using excluded middle so we do not need a typing invariant for `ei'.
+      \* The genuinely deep sub-cases are discharged via the OMITTED helper
+      \* lemmas above.
+      <3>. USE <2>5 DEF flush
+      <3>1. CASE ~(ei[self] <= K+L)
+        \* Outer-else of the IF: external' = newexternal \o subSeqLarger(...);
+        \* newexternal' = <<>>.
+        <4>1. external' = newexternal \o subSeqLarger(external, newexternal)
+          BY <3>1
+        <4>2. newexternal' = <<>>
+          BY <3>1
+        <4>3. newexternal' \in Seq(fps)  /\  StrAsc(newexternal')
+          <5>1. <<>> \in Seq(fps)  BY EmptySeq
+          <5>2. Len(newexternal') = 0  BY <4>2, EmptySeq
+          <5>3. 1..(Len(newexternal') - 1) = {}  BY <5>2
+          <5>. QED  BY <4>2, <5>1, <5>3
+        <4>4. external' \in Seq(fps)  /\  StrAsc(external')
+          \* Let `sl == subSeqLarger(external, newexternal)'.  Two cases:
+          \*
+          \*  - newexternal = <<>>: then `sl = external', so external' =
+          \*    <<>> \o external = external, which inherits Seq(fps) and
+          \*    StrAsc directly from SortedInv.
+          \*
+          \*  - newexternal # <<>>: then `sl = SelectSeq(external,
+          \*    LAMBDA p: p > largestElem(newexternal))'.  SelectSeqInSeqFps
+          \*    and SelectSeqPreservesStrAsc (both generic sequence lemmas)
+          \*    give `sl \in Seq(fps)' and `StrAsc(sl)'.  ConcatProperties
+          \*    (TLAPS standard) then gives external' \in Seq(fps).  For
+          \*    the strict-ascending property, if `sl = <<>>' we have
+          \*    external' = newexternal.  Otherwise
+          \*    `sl[1] > largestElem(newexternal) = newexternal[Len(newexternal)]'
+          \*    (SelectSeqStrictlyGreater + LargestElemDef), so ConcatStrAsc's
+          \*    boundary condition holds.
+          <5>. DEFINE sl == subSeqLarger(external, newexternal)
+          <5>0. external' = newexternal \o sl
+            BY <4>1
+          <5>a. fps \subseteq Int
+            <6>1. fps \subseteq Nat \ {0}  BY OAAssumption
+            <6>. QED  BY <6>1
+          <5>b. newexternal \in Seq(Int)
+            BY <5>a, SeqMonotonic
+          <5>1. CASE newexternal = <<>>
+            <6>1. sl = external
+              BY <5>1 DEF subSeqLarger
+            <6>2. external' = <<>> \o external
+              BY <5>0, <5>1, <6>1
+            <6>3. external' = external
+              BY <6>2, ConcatEmptySeq
+            <6>. QED  BY <6>3
+          <5>2. CASE newexternal # <<>>
+            <6>1. sl = SelectSeq(external, LAMBDA p : p > largestElem(newexternal))
+              BY <5>2 DEF subSeqLarger
+            <6>2. largestElem(newexternal) = newexternal[Len(newexternal)]
+              <7>1. largestElem(newexternal) =
+                      IF newexternal = <<>>
+                         THEN 0
+                         ELSE newexternal[Len(newexternal)]
+                BY LargestElemDef
+              <7>. QED  BY <5>2, <7>1
+            <6>3. newexternal # <<>> /\ Len(newexternal) \in Nat \ {0}
+              <7>1. Len(newexternal) \in Nat  BY LenProperties
+              <7>2. Len(newexternal) # 0  BY <5>2, EmptySeq
+              <7>. QED  BY <5>2, <7>1, <7>2
+            <6>4. Len(newexternal) \in 1..Len(newexternal)
+              BY <6>3
+            <6>5. newexternal[Len(newexternal)] \in fps
+              BY <6>4, ElementOfSeq
+            <6>6. largestElem(newexternal) \in Int
+              <7>1. newexternal[Len(newexternal)] \in Nat
+                BY <6>5, OAAssumption
+              <7>. QED  BY <6>2, <7>1
+            <6>7. sl \in Seq(fps)
+              BY <6>1, SelectSeqInSeqFps
+            <6>8. StrAsc(sl)
+              BY <6>1, SelectSeqPreservesStrAsc
+            <6>9. \A i \in 1..Len(sl) : sl[i] > largestElem(newexternal)
+              BY <6>1, <6>6, SelectSeqStrictlyGreater
+            <6>10. external' \in Seq(fps)
+              BY <5>0, <6>7, ConcatProperties
+            <6>11. StrAsc(external')
+              <7>1. CASE sl = <<>>
+                <8>1. external' = newexternal \o <<>>
+                  BY <5>0, <7>1
+                <8>2. external' = newexternal
+                  BY <8>1, ConcatEmptySeq
+                <8>. QED  BY <8>2
+              <7>2. CASE sl # <<>>
+                <8>1. Len(sl) \in Nat /\ Len(sl) # 0
+                  <9>1. Len(sl) \in Nat  BY <6>7, LenProperties
+                  <9>2. Len(sl) # 0  BY <6>7, <7>2, EmptySeq
+                  <9>. QED  BY <9>1, <9>2
+                <8>2. 1 \in 1..Len(sl)
+                  BY <8>1
+                <8>3. sl[1] > largestElem(newexternal)
+                  BY <6>9, <8>2
+                <8>4. newexternal[Len(newexternal)] < sl[1]
+                  BY <6>2, <6>6, <6>5, OAAssumption, <8>3
+                <8>5. sl \in Seq(Int)
+                  BY <5>a, <6>7, SeqMonotonic
+                <8>. QED
+                  BY <5>0, <5>b, <6>8, <8>4, <8>5, ConcatStrAsc
+              <7>. QED  BY <7>1, <7>2
+            <6>. QED  BY <6>10, <6>11
+          <5>. QED  BY <5>1, <5>2
+        <4>. QED  BY <4>3, <4>4
+      <3>2. CASE ei[self] <= K+L
+        <4>1. external' = external
+          BY <3>2
+        <4>2. CASE ~( lo'[self] # empty
+                    /\ lo'[self] > largestElem(newexternal)
+                    /\ ((ei[self] <= K /\ ~wrapped(lo'[self], ei[self]))
+                        \/ (ei[self] >  K /\  wrapped(lo'[self], ei[self]))))
+          \* Inner-else: both UNCHANGED.
+          <5>1. newexternal' = newexternal
+            BY <3>2, <4>2
+          <5>. QED  BY <4>1, <5>1
+        <4>3. CASE /\ lo'[self] # empty
+                   /\ lo'[self] > largestElem(newexternal)
+                   /\ ((ei[self] <= K /\ ~wrapped(lo'[self], ei[self]))
+                       \/ (ei[self] >  K /\  wrapped(lo'[self], ei[self])))
+          \* Inner-then: external UNCHANGED;
+          \*   newexternal' = Append(newexternal \o ss, lo'[self])
+          \* where ss == subSeqSmaller(external, newexternal, lo'[self]).
+          \*
+          \* The main derivation is showing `lo'[self] \in fps':
+          \*   - TableType + EiType + the CASE's `lo'[self] # empty'
+          \*     give `lo'[self] \in fps \cup NegFps';
+          \*   - `lo'[self] > largestElem(newexternal) >= 0' rules out
+          \*     NegFps (whose elements are strictly negative).
+          \* Once `lo'[self] \in fps' is available, the sequence-typing
+          \* and strict-ascending properties of `newexternal'' follow
+          \* from the generic `SelectSeq*', `ConcatStrAsc' and
+          \* `AppendStrAsc' helpers.
+          <5>. DEFINE ss  == subSeqSmaller(external, newexternal, lo'[self])
+          <5>. DEFINE low == largestElem(newexternal)
+          <5>. DEFINE hi  == lo'[self]
+          <5>0. newexternal' = Append(newexternal \o ss, hi)
+            BY <3>2, <4>3
+          <5>ext. external' = external
+            BY <4>1
+          \*-----------------------------------------------------------
+          \* (A) Derive hi \in fps.
+          \*-----------------------------------------------------------
+          <5>. DEFINE pos == mod(ei[self], K)
+          <5>A1. lo' = [lo EXCEPT ![self] = table[pos]]
+            BY <3>2
+          <5>A2. DOMAIN lo = ProcSet
+            OBVIOUS
+          <5>A3. hi = table[pos]
+            BY <5>A1, <5>A2
+          <5>A4. ei[self] \in Nat
+            OBVIOUS
+          <5>A5. K \in Nat \ {0}
+            BY OAAssumption
+          <5>A6. ei[self] % K \in 0 .. (K - 1)
+            BY <5>A4, <5>A5
+          <5>A7. pos \in 1..K
+            BY <5>A5, <5>A6 DEF mod
+          <5>A8. hi \in TableValues
+            BY <5>A3, <5>A7
+          <5>A9. hi \in fps \cup NegFps
+            BY <5>A8, <4>3
+          <5>A10. fps \subseteq Nat \ {0}
+            BY OAAssumption
+          <5>A11. fps \subseteq Int
+            BY <5>A10
+          \* largestElem(newexternal) is a non-negative integer.
+          <5>A12. low \in Nat
+            <6>1. largestElem(newexternal) =
+                    IF newexternal = <<>>
+                       THEN 0 ELSE newexternal[Len(newexternal)]
+              BY LargestElemDef
+            <6>2. CASE newexternal = <<>>
+              BY <6>1, <6>2
+            <6>3. CASE newexternal # <<>>
+              <7>1. Len(newexternal) \in Nat  BY LenProperties
+              <7>2. Len(newexternal) # 0  BY <6>3, EmptySeq
+              <7>3. Len(newexternal) \in 1..Len(newexternal)
+                BY <7>1, <7>2
+              <7>4. newexternal[Len(newexternal)] \in fps
+                BY <7>3, ElementOfSeq
+              <7>5. newexternal[Len(newexternal)] \in Nat
+                BY <7>4, <5>A10
+              <7>. QED  BY <6>1, <6>3, <7>5
+            <6>. QED  BY <6>2, <6>3
+          <5>A13. hi > low
+            BY <4>3
+          \* NegFps values are strictly negative.
+          <5>A14. \A n \in NegFps : n < 0
+            <6>. SUFFICES ASSUME NEW n \in NegFps
+                          PROVE  n < 0
+              OBVIOUS
+            <6>1. PICK f \in fps : n = -f
+              BY DEF NegFps
+            <6>2. f \in Nat \ {0}
+              BY <6>1, OAAssumption
+            <6>. QED  BY <6>1, <6>2
+          <5>A15. hi \notin NegFps
+            <6>. SUFFICES ASSUME hi \in NegFps  PROVE FALSE
+              OBVIOUS
+            <6>1. hi < 0
+              BY <5>A14
+            <6>2. hi \in Int
+              <7>1. PICK f \in fps : hi = -f  BY DEF NegFps
+              <7>2. f \in Nat \ {0}  BY OAAssumption
+              <7>. QED  BY <7>1, <7>2
+            <6>3. low \in Int
+              BY <5>A12
+            <6>. QED  BY <5>A12, <5>A13, <6>1, <6>2, <6>3
+          <5>A16. hi \in fps
+            BY <5>A9, <5>A15
+          <5>A17. hi \in Int
+            BY <5>A16, <5>A11
+          \*-----------------------------------------------------------
+          \* (B) Properties of the auxiliary sequence ss.
+          \*-----------------------------------------------------------
+          <5>B0. ss = SelectSeq(external,
+                                LAMBDA p : p < hi /\ p > low)
+            BY DEF subSeqSmaller
+          <5>Bx. external \in Seq(fps) /\ StrAsc(external)
+            OBVIOUS
+          <5>B1. ss \in Seq(fps)
+            BY <5>B0, <5>Bx, SelectSeqInSeqFps
+          <5>B2. StrAsc(ss)
+            BY <5>B0, <5>Bx, SelectSeqPreservesStrAsc
+          <5>B3. low \in Int
+            BY <5>A12
+          <5>B4. \A i \in 1..Len(ss) :
+                   /\ ss[i] > low
+                   /\ ss[i] < hi
+            BY <5>B0, <5>B3, <5>A17, SelectSeqInWindow
+          <5>B5. ss \in Seq(Int)
+            BY <5>B1, <5>A11, SeqMonotonic
+          <5>B6. newexternal \in Seq(Int)
+            BY <5>A11, SeqMonotonic
+          \*-----------------------------------------------------------
+          \* (C) Concatenation newexternal \o ss is in Seq(fps) and StrAsc.
+          \*-----------------------------------------------------------
+          <5>C. DEFINE base == newexternal \o ss
+          <5>C1. base \in Seq(fps)
+            BY <5>B1, ConcatProperties
+          <5>C2. base \in Seq(Int)
+            BY <5>C1, <5>A11, SeqMonotonic
+          <5>C3. StrAsc(base)
+            <6>1. CASE newexternal = <<>>
+              <7>1. base = <<>> \o ss
+                BY <6>1
+              <7>2. base = ss
+                BY <7>1, <5>B1, ConcatEmptySeq
+              <7>. QED  BY <7>2, <5>B2
+            <6>2. CASE ss = <<>>
+              <7>1. base = newexternal \o <<>>
+                BY <6>2
+              <7>2. base = newexternal
+                BY <7>1, ConcatEmptySeq
+              <7>. QED  BY <7>2
+            <6>3. CASE newexternal # <<>> /\ ss # <<>>
+              <7>1. Len(newexternal) \in Nat  BY LenProperties
+              <7>2. Len(newexternal) # 0
+                BY <6>3, EmptySeq
+              <7>3. Len(newexternal) \in 1..Len(newexternal)
+                BY <7>1, <7>2
+              <7>4. newexternal[Len(newexternal)] \in fps
+                BY <7>3, ElementOfSeq
+              <7>5. largestElem(newexternal) =
+                      IF newexternal = <<>>
+                         THEN 0 ELSE newexternal[Len(newexternal)]
+                BY LargestElemDef
+              <7>6. low = newexternal[Len(newexternal)]
+                BY <7>5, <6>3
+              <7>7. Len(ss) \in Nat  BY <5>B1, LenProperties
+              <7>8. Len(ss) # 0  BY <5>B1, <6>3, EmptySeq
+              <7>9. 1 \in 1..Len(ss)  BY <7>7, <7>8
+              <7>10. ss[1] > low
+                BY <5>B4, <7>9
+              <7>11. newexternal[Len(newexternal)] < ss[1]
+                BY <7>6, <7>10, <7>4, <5>A10
+              <7>. QED
+                BY <5>B2, <5>B5, <5>B6, <7>11, ConcatStrAsc
+            <6>. QED  BY <6>1, <6>2, <6>3
+          \*-----------------------------------------------------------
+          \* (D) Append(base, hi) is in Seq(fps) and StrAsc.
+          \*-----------------------------------------------------------
+          <5>D1. base = <<>> \/ base[Len(base)] < hi
+            <6>1. CASE base = <<>>
+              BY <6>1
+            <6>2. CASE base # <<>>
+              <7>1. Len(base) \in Nat  BY <5>C1, LenProperties
+              <7>2. Len(base) # 0  BY <5>C1, <6>2, EmptySeq
+              <7>3. Len(base) \in 1..Len(base)
+                BY <7>1, <7>2
+              <7>. DEFINE n == Len(newexternal)
+              <7>. DEFINE m == Len(ss)
+              <7>4. Len(base) = n + m
+                BY <5>Bx, <5>B1, ConcatProperties
+              <7>5. n \in Nat  BY LenProperties
+              <7>6. m \in Nat  BY <5>B1, LenProperties
+              \* Split on whether ss is empty or not.
+              <7>7. CASE ss = <<>>
+                <8>1. m = 0  BY <7>7, <5>B1, EmptySeq
+                <8>2. base = newexternal \o <<>>
+                  BY <7>7
+                <8>3. base = newexternal
+                  BY <8>2, ConcatEmptySeq
+                <8>4. newexternal # <<>>
+                  \* If both empty, base = <<>> contradicting <6>2.
+                  <9>. SUFFICES ASSUME newexternal = <<>>
+                                PROVE  FALSE
+                    OBVIOUS
+                  <9>1. base = <<>> \o ss  BY @
+                  <9>2. base = ss          BY <9>1, ConcatEmptySeq
+                  <9>3. base = <<>>        BY <9>2, <7>7
+                  <9>. QED  BY <9>3, <6>2
+                <8>5. n # 0  BY <8>4, EmptySeq
+                <8>6. Len(base) = n
+                  BY <8>1, <7>4, <7>5
+                <8>7. Len(base) = Len(newexternal)
+                  BY <8>6
+                <8>8. base[Len(base)] = newexternal[Len(newexternal)]
+                  BY <8>3, <8>6
+                <8>9. largestElem(newexternal) =
+                        IF newexternal = <<>>
+                           THEN 0
+                           ELSE newexternal[Len(newexternal)]
+                  BY LargestElemDef
+                <8>10. low = newexternal[Len(newexternal)]
+                  BY <8>9, <8>4
+                <8>11. hi > newexternal[Len(newexternal)]
+                  BY <4>3, <8>10
+                <8>. QED  BY <8>8, <8>11
+              <7>8. CASE ss # <<>>
+                <8>1. m # 0  BY <7>8, <5>B1, EmptySeq
+                <8>2. Len(base) = n + m
+                  BY <7>4
+                <8>3. n + m \in 1..(n + m)
+                  BY <8>1, <7>5, <7>6
+                <8>4. Len(base) \in Nat /\ Len(base) # 0
+                  <9>1. Len(base) \in Nat  BY <7>5, <7>6, <8>2
+                  <9>2. Len(base) # 0  BY <8>1, <7>5, <8>2
+                  <9>. QED  BY <9>1, <9>2
+                \* Element at position Len(base) of newexternal \o ss
+                \* equals ss[Len(ss)].
+                <8>5. Len(base) - n = m
+                  BY <7>5, <7>6, <8>2
+                <8>6. Len(base) - n \in 1..m
+                  BY <8>5, <8>1, <7>6
+                <8>7. base[Len(base)] = ss[Len(base) - n]
+                  BY <5>C1, <5>B1, <8>4, <8>6, ConcatProperties
+                <8>8. base[Len(base)] = ss[m]
+                  BY <8>7, <8>5
+                <8>9. m \in 1..m
+                  BY <8>1, <7>6
+                <8>10. ss[m] < hi
+                  BY <5>B4, <8>9
+                <8>. QED  BY <8>8, <8>10
+              <7>. QED  BY <7>7, <7>8
+            <6>. QED  BY <6>1, <6>2
+          <5>D2. StrAsc(Append(base, hi))
+            BY <5>C2, <5>C3, <5>D1, <5>A17, AppendStrAsc
+          <5>D3. Append(base, hi) \in Seq(fps)
+            BY <5>C1, <5>A16, AppendProperties
+          \*-----------------------------------------------------------
+          \* (E) Assemble SortedInv'.
+          \*-----------------------------------------------------------
+          <5>E1. newexternal' \in Seq(fps)
+            BY <5>0, <5>D3
+          <5>E2. StrAsc(newexternal')
+            BY <5>0, <5>D2
+          <5>E3. external' \in Seq(fps)
+            BY <5>ext
+          <5>E4. StrAsc(external')
+            BY <5>ext
+          <5>. QED  BY <5>E1, <5>E2, <5>E3, <5>E4
+        <4>. QED  BY <4>2, <4>3
+      <3>. QED  BY <3>1, <3>2
+    <2>. QED  BY <1>3, <2>1, <2>2, <2>3, <2>4, <2>5 DEF Evict
+  <1>4. CASE Terminating
+    BY <1>4 DEF Terminating, vars
+  <1>. QED  BY <1>1, <1>2, <1>3, <1>4 DEF Next
+
+(***************************************************************************)
+(* SortedInv => Sorted.                                                    *)
+(*                                                                         *)
+(* `Sorted' is `isSorted(external) /\ isSorted(newexternal)' with          *)
+(*                                                                         *)
+(*   isSorted(seq) ==                                                      *)
+(*     LET sub == SelectSeq(seq, LAMBDA e : e # empty)                     *)
+(*     IN  IF Len(sub) < 2 THEN TRUE                                       *)
+(*                          ELSE \A i \in 1..(Len(sub)-1): sub[i] < sub[i+1]*)
+(*                                                                         *)
+(* Since `external, newexternal \in Seq(fps)' and `empty \notin fps' (top  *)
+(* level ASSUME), `SelectSeqIdentityOnFps' gives                           *)
+(*   sub = SelectSeq(seq, LAMBDA e: e # empty) = seq                       *)
+(* and the strict-ascending check reduces to `StrAsc(seq)' which is in     *)
+(* `SortedInv'.                                                            *)
+(***************************************************************************)
+LEMMA SortedInvImpliesSorted == SortedInv => Sorted
+  <1>. SUFFICES ASSUME SortedInv  PROVE Sorted
+    OBVIOUS
+  <1>. USE DEF SortedInv, StrAsc
+  <1>1. SelectSeq(external, LAMBDA e : e # empty) = external
+    BY SelectSeqIdentityOnFps
+  <1>2. SelectSeq(newexternal, LAMBDA e : e # empty) = newexternal
+    BY SelectSeqIdentityOnFps
+  <1>3. isSorted(external)
+    BY <1>1 DEF isSorted
+  <1>4. isSorted(newexternal)
+    BY <1>2 DEF isSorted
+  <1>. QED  BY <1>3, <1>4 DEF Sorted
+
+(***************************************************************************)
+(* Main theorem: Spec => []Sorted.                                         *)
+(***************************************************************************)
+THEOREM SortedSafety == Spec => []Sorted
+  \* `SortedInvNext' now requires `EiType /\ DupInv' as additional
+  \* hypotheses (to derive `lo'[self] \in fps' in the flush inner-then
+  \* case via `TableType').  We therefore thread the full layer-cake
+  \* alongside `SortedInv'.  This makes `SortedSafety' transitively
+  \* depend on the remaining OMITTEDs in `DupInvNext' (nestedIns, set,
+  \* flush outer-else, cas successful), but that dependency is no worse
+  \* than the OMITTED that previously lived directly in `SortedInvNext'.
+  <1>1. Spec => [](Inv /\ StackOK /\ ResultType /\ EiType /\ DupInv
+                   /\ SortedInv)
+    <2>1. Init => Inv /\ StackOK /\ ResultType /\ EiType /\ DupInv
+                  /\ SortedInv
+      BY InitInv, InitStackOK, InitResultType, InitEiType, InitDupInv,
+         InitSortedInv
+    <2>2. (Inv /\ StackOK /\ ResultType /\ EiType /\ DupInv /\ SortedInv)
+            /\ [Next]_vars
+          => (Inv /\ StackOK /\ ResultType /\ EiType /\ DupInv /\ SortedInv)'
+      <3>1. Inv /\ StackOK /\ [Next]_vars => Inv'
+        BY InvNext
+      <3>2. Inv /\ StackOK /\ [Next]_vars => StackOK'
+        BY StackOKInd
+      <3>3. ResultType /\ [Next]_vars => ResultType'
+        BY ResultTypeInd
+      <3>4. StackOK /\ EiType /\ [Next]_vars => EiType'
+        BY EiTypeInd
+      <3>5. Inv /\ ResultType /\ EiType /\ DupInv /\ [Next]_vars => DupInv'
+        BY DupInvNext
+      <3>6. EiType /\ DupInv /\ SortedInv /\ [Next]_vars => SortedInv'
+        BY SortedInvNext
+      <3>. QED  BY <3>1, <3>2, <3>3, <3>4, <3>5, <3>6
+    <2>. QED  BY <2>1, <2>2, PTL DEF Spec
+  <1>2. SortedInv => Sorted
+    BY SortedInvImpliesSorted
   <1>. QED  BY <1>1, <1>2, PTL
 
 (***************************************************************************)
