@@ -810,7 +810,68 @@ Contains == /\ \A seen \in history:
 (* The absolute value of the given number.                                 *)
 (***************************************************************************)
 abs(number) == IF number < 0 THEN -1 * number ELSE number
-       
+
+(***************************************************************************)
+(* CAS freshness: at the `"cas"' label, when `table[idx] = expected[self]', *)
+(* no other non-empty slot may share `|fp[self]|', and no eviction sort     *)
+(* step may hold that value in `lo[...]' (see proof module for motivation). *)
+(* Violable when `expected' was read from a stale cell; reproduce with      *)
+(* `CasFreshnessCexInit' / `CasFreshnessCexNext'.                          *)
+(***************************************************************************)
+CasFreshness ==
+  \A self \in Writer :
+    pc[self] = "cas" /\
+    table[idx(fp[self], index[self])] = expected[self] =>
+      /\ idx(fp[self], index[self]) \in 1..K
+      /\ \A k \in 1..K :
+           k # idx(fp[self], index[self]) /\ table[k] # empty =>
+             abs(table[k]) # abs(fp[self])
+      /\ \A s2 \in Writer :
+           pc[s2] \in {"nestedIns", "set"} /\ lo[s2] # empty =>
+             abs(lo[s2]) # abs(fp[self])
+
+(***************************************************************************)
+(* Concrete constants for the known CasFreshness counterexample.            *)
+(* Apalache (example):                                                     *)
+(*   check --cinit=CasFreshnessCexConstants --init=CasFreshnessCexInit      *)
+(*        --next=CasFreshnessCexNext --inv=CasFreshness --length=3          *)
+(*        OpenAddressing.tla                                               *)
+(***************************************************************************)
+CasFreshnessCexConstants ==
+  /\ K = 4
+  /\ L = 1
+  /\ fps = {1, 2}
+  /\ empty = 0
+  /\ Writer = {"w"}
+  /\ Reader = {}
+
+(***************************************************************************)
+(* Counterexample initial state for `CasFreshness' (Apalache).              *)
+(* NB: We do not conjoin `OAAssumption' here: nesting it under this         *)
+(* operator makes Apalache 0.57's importer throw MatchError(23). The        *)
+(* equalities in `CasFreshnessCexConstants' imply OAAssumption anyway.      *)
+(***************************************************************************)
+CasFreshnessCexInit ==
+  /\ CasFreshnessCexConstants
+  /\ table = [i \in 1..K |-> IF i = 1 THEN 1 ELSE empty]
+  /\ external = <<>>
+  /\ newexternal = <<>>
+  /\ evict = FALSE
+  /\ waitCnt = 0
+  /\ history = {}
+  /\ ei = [self \in ProcSet |-> 1]
+  /\ ej = [self \in ProcSet |-> 1]
+  /\ lo = [self \in ProcSet |-> 0]
+  /\ fp = [self \in Writer |-> 1]
+  /\ index = [self \in Writer |-> 0]
+  /\ result = [self \in Writer |-> FALSE]
+  /\ expected = [self \in Writer |-> -1]
+  /\ stack = [self \in ProcSet |-> << >>]
+  /\ pc = [self \in ProcSet |-> "insrt"]
+
+CasFreshnessCexNext ==
+  \E self \in Writer : insrt(self)
+
 (***************************************************************************)
 (* True when no eviction is running.                                       *)
 (***************************************************************************)
