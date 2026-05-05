@@ -1109,26 +1109,19 @@ THEOREM CompleteSafety == Spec => []CompleteAsSafety
 (*        plus the `cntns'/`isMth' check loop, requiring a per-process     *)
 (*        invariant on the contents of `table' along the probe sequence    *)
 (*        as a function of the algorithm's `index' / `expected' loop       *)
-(*        variables.                                                       *)
+(*        variables.  (The SAME cas-success OMITTED reappears as the       *)
+(*        single unproven sub-case of `SortPermInd' below.)                *)
 (*                                                                         *)
 (*    (b) The sort actions `nestedIns' (cell-shift) and `set' (cell-       *)
-(*        place): these are the writer-Evict actions that mutate `table'   *)
-(*        in non-`|.|'-preserving ways during the insertion-sort body.     *)
-(*        They lie inside the Evict body (so `evict = TRUE' and the second *)
-(*        conjunct is vacuous), but discharging their effect on the third  *)
-(*        conjunct -- showing that no other writer is at `rtrn'/`endEv'    *)
-(*        while we are mid-sort -- needs the procedure's mutual-exclusion  *)
-(*        invariant (`waitCnt = Cardinality(Writer) - 1' when `Evict()' is *)
-(*        active), which we do not formalise here.                         *)
+(*        place): FULLY DISCHARGED via `EvictExclusive' (mutex) and        *)
+(*        `EjType' (pinning probe positions to `1..K').                    *)
 (*                                                                         *)
-(*    (c) `flush' loop exit (and entry to `rtrn'): at this point we need   *)
-(*        `NoDupsTable' to hold, which requires carrying it across the     *)
-(*        full sort+flush procedure.  The flush iterations only negate     *)
-(*        cells (preserving `|table[i]|') so `NoDupsTable' is preserved    *)
-(*        once established at flush entry; the genuinely deep step is      *)
-(*        showing that the insertion sort permutes the multiset of         *)
-(*        non-empty values in `table' (so `NoDupsTable' established        *)
-(*        before sort entry survives sort exit).                           *)
+(*    (c) `flush' loop exit (and entry to `rtrn'): FULLY DISCHARGED via    *)
+(*        `SortPermInv' (the dedicated sort-permutation invariant          *)
+(*        defined further below).  `SortPermInv' formalises exactly the    *)
+(*        "insertion sort permutes the multiset of non-empty `|table[i]|'" *)
+(*        property, and is itself inductive modulo the same cas-success    *)
+(*        OMITTED as in (a).                                               *)
 (*                                                                         *)
 (*  All other structural cases of the inductive step are fully discharged. *)
 (***************************************************************************)
@@ -2542,6 +2535,1623 @@ LEMMA LoTypeInd ==
   <1>. QED  BY <1>1, <1>2, <1>3, <1>4 DEF Next
 
 (***************************************************************************)
+(* `SortPermInv': the sort-permutation invariant for the insertion-sort   *)
+(* body of the `Evict' procedure.  It captures three facts:                *)
+(*                                                                         *)
+(*  1. `NoDupsTable' holds at every "checkpoint" pc label of the Evict    *)
+(*     procedure where the sort body is not in the middle of a shift --    *)
+(*     i.e., at `waitIns', `strIns', and `flush'.  (At `rtrn' and          *)
+(*     `endEv' this is already guaranteed by `DupInv'.)                    *)
+(*                                                                         *)
+(*  2. At `pc = "strIns"' the cursors satisfy `ej[self] = ei[self]'.  The  *)
+(*     previous `set' action established `ej' = ei'' (both become          *)
+(*     `ei + 1'); `waitIns' initializes both to 1.                         *)
+(*                                                                         *)
+(*  3. At `pc \in {"nestedIns", "set"}' -- in the middle of a sort         *)
+(*     iteration -- the table may contain a SINGLE temporary duplicate    *)
+(*     at position `gap == mod(ej[self] + 1, K)'.  Specifically:           *)
+(*                                                                         *)
+(*     (a) `gap \in 1..K' (well-formedness).                               *)
+(*     (b) If `lo[self] # empty' then `|lo[self]|' is distinct from       *)
+(*         `|table[j]|' for every non-empty cell `j \in 1..K \ {gap}'.     *)
+(*     (c) `|table[i]|' is distinct from `|table[j]|' for every pair of    *)
+(*         distinct, non-empty cells `i, j \in 1..K \ {gap}'.              *)
+(*                                                                         *)
+(* Together (1)-(3) imply that the `set' action (which writes `lo[self]'  *)
+(* into position `gap') restores full `NoDupsTable' at the next `strIns':  *)
+(* the only potentially-colliding cell has been overwritten.               *)
+(*                                                                         *)
+(* This is the "multiset-permutation" invariant discussed as (b)/(c) in   *)
+(* the doc-comment above; we formalise it as an explicit state invariant  *)
+(* rather than via an auxiliary multiset variable.                         *)
+(***************************************************************************)
+SortPermInv ==
+  /\ \A self \in ProcSet :
+       pc[self] \in {"waitIns", "strIns", "flush"} => NoDupsTable
+  /\ \A self \in ProcSet :
+       pc[self] = "strIns" => ej[self] = ei[self]
+  /\ \A self \in ProcSet :
+       pc[self] \in {"nestedIns", "set"} =>
+         /\ mod(ej[self] + 1, K) \in 1..K
+         /\ (lo[self] # empty =>
+               \A j \in 1..K :
+                 j # mod(ej[self] + 1, K) /\ table[j] # empty =>
+                   abs(table[j]) # abs(lo[self]))
+         /\ \A i, j \in 1..K :
+              i # j /\ i # mod(ej[self] + 1, K)
+                    /\ j # mod(ej[self] + 1, K)
+                    /\ table[i] # empty /\ table[j] # empty =>
+                abs(table[i]) # abs(table[j])
+
+LEMMA InitSortPermInv == Init => SortPermInv
+  <1>. SUFFICES ASSUME Init  PROVE SortPermInv
+    OBVIOUS
+  <1>1. \A self \in ProcSet : pc[self] = "pick"
+    BY ProcSetIsWriter DEF Init, ProcSet
+  <1>2. \A self \in ProcSet :
+          pc[self] \notin {"waitIns", "strIns", "flush",
+                            "nestedIns", "set"}
+    BY <1>1
+  <1>. QED  BY <1>2 DEF SortPermInv
+
+(***************************************************************************)
+(* `SortPermInd': `SortPermInv' is preserved by every action of `Next'.   *)
+(*                                                                         *)
+(* Proof outline, action by action:                                        *)
+(*                                                                         *)
+(*  - Stutter / Terminating: routine.                                      *)
+(*                                                                         *)
+(*  - Evict body:                                                          *)
+(*    * `strIns' THEN (ei <= K+L): pc'[self] = "nestedIns"; lo' <-         *)
+(*      table[mod(ei+1, K)].  Since pre `ej = ei' (conjunct 2), the        *)
+(*      post gap position coincides with `mod(ei+1, K)', and the value    *)
+(*      just saved into `lo'' is exactly the value at that position.       *)
+(*      Conjunct (3) follows from pre `NoDupsTable' at `pc = "strIns"'.    *)
+(*    * `strIns' ELSE (ei > K+L): pc'[self] = "flush"; table UNCHANGED.    *)
+(*      Conjunct (1) post follows from pre `NoDupsTable' at `pc =         *)
+(*      "strIns"'.                                                         *)
+(*    * `nestedIns' THEN: the shift `table[gap_pre] := table[mod(ej,       *)
+(*      K)]' moves the old gap position's duplicate one step, restoring    *)
+(*      all NoDup relations modulo the new gap `mod(ej, K)'.  lo          *)
+(*      unchanged.                                                         *)
+(*    * `nestedIns' ELSE: UNCHANGED <<table, ej, lo>>; gap unchanged.      *)
+(*    * `set': writes lo into gap.  Post pc = "strIns", ej' = ei'.         *)
+(*      `NoDupsTable'' follows from conjunct (3) applied to the written    *)
+(*      cell (whose new value `lo' is distinct from all others by (b))     *)
+(*      and to the remaining cells (distinct pairwise by (c)).             *)
+(*    * `flush' THEN inner-THEN: negates `table[mod(ei, K)]' in place;    *)
+(*      |.| preserved, so `NoDupsTable' preserved.                         *)
+(*    * `flush' THEN inner-ELSE: UNCHANGED table; trivial.                 *)
+(*    * `flush' ELSE (exit): pc'[self] = "rtrn"; table UNCHANGED.          *)
+(*    * `rtrn': pc'[self] = "endEv"; table UNCHANGED.                      *)
+(*                                                                         *)
+(*  - Writer disjuncts: `pc[self]' transitions to/from non-Evict labels;   *)
+(*    all modifications to `table' happen under `evict = FALSE' (cas       *)
+(*    success) while the Evict mutex (`EvictExclusive') ensures no other  *)
+(*    writer is at any of the trigger labels, making the invariant         *)
+(*    vacuously preserved for OTHER writers.  The entry transition         *)
+(*    `tryEv' (with pre `evict = FALSE') moves self into "waitIns";        *)
+(*    pre `FindOrPut' gives pre `NoDupsTable' (via `DupInv').              *)
+(***************************************************************************)
+LEMMA SortPermInd ==
+  Inv /\ StackOK /\ ResultType /\ EiType /\ EjType /\ LoType /\ DupInv
+     /\ EvictExclusive /\ SortPermInv /\ [Next]_vars
+     => SortPermInv'
+  <1>. SUFFICES ASSUME Inv, StackOK, ResultType, EiType, EjType, LoType, DupInv,
+                       EvictExclusive, SortPermInv, [Next]_vars
+                PROVE  SortPermInv'
+    OBVIOUS
+  <1>. USE DEF SortPermInv, DupInv, TableType, NoDupsTable, FindOrPut,
+              TableValues, EiType, EjType, LoType,
+              EvictExclusive, EvictUnion, EvictLabels,
+              StackOK, WriterLabels, ProcSet,
+              Inv, PcRangeOK, PcRange
+  \* Standing mod(.,K)-range fact: for any integer i, `mod(i, K) \in 1..K'.
+  <1>Mod. ASSUME NEW i \in Int
+          PROVE  mod(i, K) \in 1..K
+    <2>1. K \in Nat \ {0}  BY OAAssumption
+    <2>2. i % K \in 0..(K-1)  BY <2>1
+    <2>. QED  BY <2>1, <2>2 DEF mod
+  <1>1. CASE UNCHANGED vars
+    BY <1>1 DEF vars
+  <1>2. ASSUME NEW self \in ProcSet, Evict(self)
+        PROVE  SortPermInv'
+    <2>. USE <1>2, ProcSetIsWriter DEF Evict
+    <2>. DEFINE gap == mod(ej[self] + 1, K)
+    <2>. DEFINE gapp == mod(ej'[self] + 1, K)
+    \* Pre-state: by EvictExclusive, self is the UNIQUE writer in
+    \* EvictUnion.  Therefore every OTHER writer is OUTSIDE
+    \* {"waitIns", "strIns", "flush", "nestedIns", "set"}.
+    <2>Muex. \A s2 \in ProcSet : s2 # self =>
+                pc[s2] \notin {"waitIns", "strIns", "flush",
+                                "nestedIns", "set"}
+      <3>1. pc[self] \in EvictLabels \cup {"strIns"}
+        <4>1. CASE strIns(self)     BY <4>1 DEF strIns
+        <4>2. CASE nestedIns(self)  BY <4>2 DEF nestedIns
+        <4>3. CASE set(self)        BY <4>3 DEF set
+        <4>4. CASE flush(self)      BY <4>4 DEF flush
+        <4>5. CASE rtrn(self)       BY <4>5 DEF rtrn
+        <4>. QED  BY <4>1, <4>2, <4>3, <4>4, <4>5
+      <3>2. pc[self] \in EvictUnion  BY <3>1
+      <3>. SUFFICES ASSUME NEW s2 \in ProcSet, s2 # self,
+                            pc[s2] \in {"waitIns", "strIns", "flush",
+                                         "nestedIns", "set"}
+                    PROVE  FALSE
+        OBVIOUS
+      <3>3. pc[s2] \in EvictUnion  OBVIOUS
+      <3>4. s2 = self  BY <3>2, <3>3, ProcSetIsWriter
+      <3>. QED  BY <3>4
+    <2>1. CASE strIns(self)
+      <3>. USE <2>1 DEF strIns
+      <3>1. pc[self] = "strIns"  OBVIOUS
+      <3>2. UNCHANGED table  OBVIOUS
+      <3>A. CASE ei[self] <= K+L
+        <4>. USE <3>A
+        <4>1. pc'[self] = "nestedIns"  OBVIOUS
+        <4>2. ei'[self] = ei[self]  OBVIOUS
+        <4>3. ej'[self] = ej[self]  OBVIOUS
+        <4>4. ej[self] = ei[self]  BY <3>1
+        <4>5. lo'[self] = table[mod(ei[self] + 1, K)]  OBVIOUS
+        <4>6. gapp = mod(ej[self] + 1, K)  BY <4>3
+        <4>7. ej[self] \in Int  BY ProcSetIsWriter
+        <4>8. ej[self] + 1 \in Int  BY <4>7
+        <4>9. gapp \in 1..K  BY <4>6, <4>8, <1>Mod
+        <4>10. gapp = mod(ei[self] + 1, K)  BY <4>4, <4>6
+        <4>11. lo'[self] = table[gapp]  BY <4>5, <4>10
+        \* NoDupsTable held pre at pc = "strIns".
+        <4>NdT. \A i, j \in 1..K :
+                   i # j /\ table[i] # empty /\ table[j] # empty =>
+                     abs(table[i]) # abs(table[j])
+          BY <3>1
+        \* Close SortPermInv' conjuncts by cases on pc'[s2].
+        <4>. SUFFICES
+               /\ \A s2 \in ProcSet :
+                    pc'[s2] \in {"waitIns", "strIns", "flush"}
+                       => NoDupsTable'
+               /\ \A s2 \in ProcSet :
+                    pc'[s2] = "strIns" => ej'[s2] = ei'[s2]
+               /\ \A s2 \in ProcSet :
+                    pc'[s2] \in {"nestedIns", "set"} =>
+                      /\ mod(ej'[s2] + 1, K) \in 1..K
+                      /\ (lo'[s2] # empty =>
+                            \A j \in 1..K :
+                              j # mod(ej'[s2] + 1, K)
+                                /\ table'[j] # empty =>
+                                abs(table'[j]) # abs(lo'[s2]))
+                      /\ \A i, j \in 1..K :
+                           i # j /\ i # mod(ej'[s2] + 1, K)
+                                 /\ j # mod(ej'[s2] + 1, K)
+                                 /\ table'[i] # empty
+                                 /\ table'[j] # empty =>
+                           abs(table'[i]) # abs(table'[j])
+          BY DEF SortPermInv
+        \* Conjunct 1: pc'[s2] in {waitIns, strIns, flush}.
+        <4>C1. \A s2 \in ProcSet :
+                 pc'[s2] \in {"waitIns", "strIns", "flush"}
+                   => NoDupsTable'
+          <5>. SUFFICES ASSUME NEW s2 \in ProcSet,
+                                pc'[s2] \in {"waitIns", "strIns", "flush"}
+                        PROVE  NoDupsTable'
+            OBVIOUS
+          <5>1. s2 # self  BY <4>1
+          <5>2. pc'[s2] = pc[s2]  BY <5>1
+          <5>3. pc[s2] \in {"waitIns", "strIns", "flush"}  BY <5>2
+          <5>4. NoDupsTable  BY <5>3
+          <5>. QED  BY <5>4, <3>2
+        \* Conjunct 2: pc'[s2] = "strIns".
+        <4>C2. \A s2 \in ProcSet :
+                 pc'[s2] = "strIns" => ej'[s2] = ei'[s2]
+          <5>. SUFFICES ASSUME NEW s2 \in ProcSet, pc'[s2] = "strIns"
+                        PROVE  ej'[s2] = ei'[s2]
+            OBVIOUS
+          <5>1. s2 # self  BY <4>1
+          <5>2. pc'[s2] = pc[s2]  BY <5>1
+          <5>3. pc[s2] = "strIns"  BY <5>2
+          <5>4. ej[s2] = ei[s2]  BY <5>3
+          <5>5. ej'[s2] = ej[s2]  BY <5>1
+          <5>6. ei'[s2] = ei[s2]  BY <5>1
+          <5>. QED  BY <5>4, <5>5, <5>6
+        \* Conjunct 3: pc'[s2] in {nestedIns, set}.
+        <4>C3. \A s2 \in ProcSet :
+                 pc'[s2] \in {"nestedIns", "set"} =>
+                   /\ mod(ej'[s2] + 1, K) \in 1..K
+                   /\ (lo'[s2] # empty =>
+                         \A j \in 1..K :
+                           j # mod(ej'[s2] + 1, K)
+                             /\ table'[j] # empty =>
+                             abs(table'[j]) # abs(lo'[s2]))
+                   /\ \A i, j \in 1..K :
+                        i # j /\ i # mod(ej'[s2] + 1, K)
+                              /\ j # mod(ej'[s2] + 1, K)
+                              /\ table'[i] # empty
+                              /\ table'[j] # empty =>
+                        abs(table'[i]) # abs(table'[j])
+          <5>. SUFFICES ASSUME NEW s2 \in ProcSet,
+                                pc'[s2] \in {"nestedIns", "set"}
+                        PROVE  /\ mod(ej'[s2] + 1, K) \in 1..K
+                               /\ (lo'[s2] # empty =>
+                                     \A j \in 1..K :
+                                       j # mod(ej'[s2] + 1, K)
+                                         /\ table'[j] # empty =>
+                                         abs(table'[j])
+                                           # abs(lo'[s2]))
+                               /\ \A i, j \in 1..K :
+                                    i # j
+                                      /\ i # mod(ej'[s2] + 1, K)
+                                      /\ j # mod(ej'[s2] + 1, K)
+                                      /\ table'[i] # empty
+                                      /\ table'[j] # empty =>
+                                    abs(table'[i]) # abs(table'[j])
+            OBVIOUS
+          <5>1. CASE s2 = self
+            \* s2 = self, pc'[self] = "nestedIns".
+            <6>1. ej'[s2] = ej[self]  BY <5>1, <4>3
+            <6>2. mod(ej'[s2] + 1, K) = gapp  BY <5>1, <6>1, <4>6
+            <6>3. mod(ej'[s2] + 1, K) \in 1..K  BY <6>2, <4>9
+            <6>4. table'[mod(ej'[s2] + 1, K)] = table[gapp]
+              BY <3>2, <6>2
+            <6>5. lo'[s2] = table[gapp]  BY <5>1, <4>11
+            \* (b): lo'[s2] # empty => |table'[j]| # |lo'[s2]|.
+            <6>6. lo'[s2] # empty =>
+                    \A j \in 1..K :
+                      j # mod(ej'[s2] + 1, K)
+                        /\ table'[j] # empty =>
+                        abs(table'[j]) # abs(lo'[s2])
+              <7>. SUFFICES ASSUME lo'[s2] # empty,
+                                    NEW j \in 1..K,
+                                    j # mod(ej'[s2] + 1, K),
+                                    table'[j] # empty
+                            PROVE  abs(table'[j]) # abs(lo'[s2])
+                OBVIOUS
+              <7>1. table'[j] = table[j]  BY <3>2
+              <7>2. j # gapp  BY <6>2
+              <7>3. table[gapp] # empty  BY <6>5
+              <7>4. table[j] # empty  BY <7>1
+              <7>5. abs(table[j]) # abs(table[gapp])
+                BY <4>NdT, <7>2, <4>9, <7>3, <7>4
+              <7>. QED  BY <7>1, <7>5, <6>5
+            \* (c): for i, j # gap (post), pairwise |.| distinct.
+            <6>7. \A i, j \in 1..K :
+                     i # j /\ i # mod(ej'[s2] + 1, K)
+                           /\ j # mod(ej'[s2] + 1, K)
+                           /\ table'[i] # empty
+                           /\ table'[j] # empty =>
+                     abs(table'[i]) # abs(table'[j])
+              <7>. SUFFICES ASSUME NEW i \in 1..K, NEW j \in 1..K,
+                                    i # j,
+                                    i # mod(ej'[s2] + 1, K),
+                                    j # mod(ej'[s2] + 1, K),
+                                    table'[i] # empty,
+                                    table'[j] # empty
+                            PROVE  abs(table'[i]) # abs(table'[j])
+                OBVIOUS
+              <7>1. table'[i] = table[i]  BY <3>2
+              <7>2. table'[j] = table[j]  BY <3>2
+              <7>. QED  BY <7>1, <7>2, <4>NdT
+            <6>. QED  BY <5>1, <6>3, <6>6, <6>7
+          <5>2. CASE s2 # self
+            <6>1. pc'[s2] = pc[s2]  BY <5>2
+            <6>2. pc[s2] \in {"nestedIns", "set"}  BY <6>1
+            <6>3. ej'[s2] = ej[s2]  BY <5>2
+            <6>4. lo'[s2] = lo[s2]  BY <5>2
+            <6>5. table'[s2] = table[s2]  BY <3>2  \* unused; table unchanged
+            <6>. QED
+              BY <6>2, <6>3, <6>4, <3>2
+          <5>. QED  BY <5>1, <5>2
+        <4>. QED  BY <4>C1, <4>C2, <4>C3
+      <3>B. CASE ~(ei[self] <= K+L)
+        \* pc'[self] = "flush", ei' := 1, ej, lo, table UNCHANGED.
+        <4>. USE <3>B
+        <4>1. pc'[self] = "flush"  OBVIOUS
+        <4>2. ej'[self] = ej[self]  OBVIOUS
+        <4>3. lo'[self] = lo[self]  OBVIOUS
+        <4>4. UNCHANGED table  OBVIOUS
+        <4>NdT. NoDupsTable  BY <3>1
+        \* Close SortPermInv' by cases on pc'[s2].
+        <4>C1. \A s2 \in ProcSet :
+                 pc'[s2] \in {"waitIns", "strIns", "flush"}
+                   => NoDupsTable'
+          <5>. SUFFICES ASSUME NEW s2 \in ProcSet,
+                                pc'[s2] \in {"waitIns", "strIns", "flush"}
+                        PROVE  NoDupsTable'
+            OBVIOUS
+          <5>1. CASE s2 = self
+            BY <5>1, <4>NdT, <3>2
+          <5>2. CASE s2 # self
+            <6>1. pc'[s2] = pc[s2]  BY <5>2
+            <6>2. pc[s2] \in {"waitIns", "strIns", "flush"}  BY <6>1
+            <6>3. NoDupsTable  BY <6>2
+            <6>. QED  BY <6>3, <3>2
+          <5>. QED  BY <5>1, <5>2
+        <4>C2. \A s2 \in ProcSet :
+                 pc'[s2] = "strIns" => ej'[s2] = ei'[s2]
+          <5>. SUFFICES ASSUME NEW s2 \in ProcSet, pc'[s2] = "strIns"
+                        PROVE  ej'[s2] = ei'[s2]
+            OBVIOUS
+          <5>1. s2 # self  BY <4>1
+          <5>2. pc'[s2] = pc[s2]  BY <5>1
+          <5>3. pc[s2] = "strIns"  BY <5>2
+          <5>4. ej[s2] = ei[s2]  BY <5>3
+          <5>5. ej'[s2] = ej[s2]  BY <5>1
+          <5>6. ei'[s2] = ei[s2]  BY <5>1
+          <5>. QED  BY <5>4, <5>5, <5>6
+        <4>C3. \A s2 \in ProcSet :
+                 pc'[s2] \in {"nestedIns", "set"} =>
+                   /\ mod(ej'[s2] + 1, K) \in 1..K
+                   /\ (lo'[s2] # empty =>
+                         \A j \in 1..K :
+                           j # mod(ej'[s2] + 1, K)
+                             /\ table'[j] # empty =>
+                             abs(table'[j]) # abs(lo'[s2]))
+                   /\ \A i, j \in 1..K :
+                        i # j /\ i # mod(ej'[s2] + 1, K)
+                              /\ j # mod(ej'[s2] + 1, K)
+                              /\ table'[i] # empty
+                              /\ table'[j] # empty =>
+                        abs(table'[i]) # abs(table'[j])
+          <5>. SUFFICES ASSUME NEW s2 \in ProcSet,
+                                pc'[s2] \in {"nestedIns", "set"}
+                        PROVE  /\ mod(ej'[s2] + 1, K) \in 1..K
+                               /\ (lo'[s2] # empty =>
+                                     \A j \in 1..K :
+                                       j # mod(ej'[s2] + 1, K)
+                                         /\ table'[j] # empty =>
+                                         abs(table'[j])
+                                           # abs(lo'[s2]))
+                               /\ \A i, j \in 1..K :
+                                    i # j
+                                      /\ i # mod(ej'[s2] + 1, K)
+                                      /\ j # mod(ej'[s2] + 1, K)
+                                      /\ table'[i] # empty
+                                      /\ table'[j] # empty =>
+                                    abs(table'[i]) # abs(table'[j])
+            OBVIOUS
+          <5>1. s2 # self  BY <4>1
+          <5>2. pc'[s2] = pc[s2]  BY <5>1
+          <5>3. pc[s2] \in {"nestedIns", "set"}  BY <5>2
+          <5>4. ej'[s2] = ej[s2]  BY <5>1
+          <5>5. lo'[s2] = lo[s2]  BY <5>1
+          <5>. QED  BY <5>3, <5>4, <5>5, <3>2
+        <4>. QED  BY <4>C1, <4>C2, <4>C3
+      <3>. QED  BY <3>A, <3>B
+    <2>2. CASE nestedIns(self)
+      \* Three cases:
+      \*   THEN (compare <= -1), ej # 0: pc' = "nestedIns", ej' = ej - 1,
+      \*                                 table[gap] <- table[mod(ej,K)].
+      \*   THEN (compare <= -1), ej = 0: pc' = "set", ej' = -1,
+      \*                                 table[gap] <- table[K].
+      \*   ELSE (compare > -1): pc' = "set", table, ej, lo UNCHANGED.
+      \* In the two THEN branches, `gapp = mod(ej, K)' regardless of
+      \* whether ej = 0 (because (ej - 1) + 1 = ej).  The ELSE branch
+      \* has `gapp = gap' since ej is unchanged.
+      <3>. USE <2>2 DEF nestedIns
+      <3>1. pc[self] = "nestedIns"  OBVIOUS
+      <3>2. lo'[self] = lo[self]  OBVIOUS
+      <3>3. ei'[self] = ei[self]  OBVIOUS
+      <3>G. gap \in 1..K  BY <3>1
+      <3>Int. ej[self] \in Int  BY ProcSetIsWriter
+      <3>A. CASE compare(lo[self], mod(ei[self] + 1, K),
+                          table[mod(ej[self], K)], mod(ej[self], K)) <= -1
+        \* Combined THEN branch (both sub-cases).
+        <4>. USE <3>A
+        <4>. DEFINE src == mod(ej[self], K)
+        <4>1. src \in 1..K  BY <1>Mod, <3>Int
+        <4>2. table' = [table EXCEPT ![gap] = table[src]]
+          OBVIOUS
+        <4>3. table'[gap] = table[src]  BY <4>2, <3>G
+        <4>4. \A k \in 1..K : k # gap => table'[k] = table[k]
+          BY <4>2, <3>G
+        <4>5. ej'[self] = ej[self] - 1  OBVIOUS
+        <4>6. ej'[self] \in Int  BY <4>5, <3>Int
+        <4>7. ej'[self] + 1 = ej[self]  BY <4>5
+        <4>8. gapp = mod(ej[self], K)  BY <4>7
+        <4>9. gapp = src  BY <4>8
+        <4>10. gapp \in 1..K  BY <4>9, <4>1
+        <4>11. pc'[self] \in {"nestedIns", "set"}
+          OBVIOUS
+        \* SortPermInv' at self, conjunct 3, via gapp = src.
+        <4>Self3. pc'[self] \in {"nestedIns", "set"} =>
+                    /\ mod(ej'[self] + 1, K) \in 1..K
+                    /\ (lo'[self] # empty =>
+                          \A j \in 1..K :
+                            j # mod(ej'[self] + 1, K)
+                              /\ table'[j] # empty =>
+                              abs(table'[j]) # abs(lo'[self]))
+                    /\ \A i, j \in 1..K :
+                         i # j /\ i # mod(ej'[self] + 1, K)
+                               /\ j # mod(ej'[self] + 1, K)
+                               /\ table'[i] # empty
+                               /\ table'[j] # empty =>
+                         abs(table'[i]) # abs(table'[j])
+          <5>. SUFFICES /\ mod(ej'[self] + 1, K) \in 1..K
+                       /\ (lo'[self] # empty =>
+                             \A j \in 1..K :
+                               j # mod(ej'[self] + 1, K)
+                                 /\ table'[j] # empty =>
+                                 abs(table'[j]) # abs(lo'[self]))
+                       /\ \A i, j \in 1..K :
+                            i # j /\ i # mod(ej'[self] + 1, K)
+                                  /\ j # mod(ej'[self] + 1, K)
+                                  /\ table'[i] # empty
+                                  /\ table'[j] # empty =>
+                            abs(table'[i]) # abs(table'[j])
+            OBVIOUS
+          <5>Gpp. mod(ej'[self] + 1, K) = src
+            BY <4>7, <4>8
+          <5>1. mod(ej'[self] + 1, K) \in 1..K  BY <5>Gpp, <4>1
+          \* Part (b): for j # src (= gapp), j non-empty post-state,
+          \*           |table'[j]| # |lo'[self]|.
+          <5>2. lo'[self] # empty =>
+                  \A j \in 1..K :
+                    j # mod(ej'[self] + 1, K) /\ table'[j] # empty =>
+                      abs(table'[j]) # abs(lo'[self])
+            <6>. SUFFICES ASSUME lo'[self] # empty,
+                                  NEW j \in 1..K,
+                                  j # mod(ej'[self] + 1, K),
+                                  table'[j] # empty
+                          PROVE  abs(table'[j]) # abs(lo'[self])
+              OBVIOUS
+            <6>1. j # src  BY <5>Gpp
+            <6>2. lo[self] # empty  BY <3>2
+            <6>3. CASE j = gap
+              \* table'[j] = table[src].
+              <7>1. table'[j] = table[src]  BY <4>3, <6>3
+              \* By pre SortPermInv conjunct 3(b): for src # gap and
+              \* (if table[src] # empty) |table[src]| # |lo[self]|.
+              <7>2. src # gap  BY <6>3, <6>1
+              <7>3. table[src] # empty  BY <7>1
+              <7>4. abs(table[src]) # abs(lo[self])
+                BY <3>1, <6>2, <7>2, <7>3, <4>1, <3>G
+              <7>. QED  BY <7>1, <7>4, <3>2
+            <6>4. CASE j # gap
+              <7>1. table'[j] = table[j]  BY <4>4, <6>4
+              <7>2. j # gap /\ table[j] # empty  BY <6>4, <7>1
+              <7>3. abs(table[j]) # abs(lo[self])
+                BY <3>1, <6>2, <7>2
+              <7>. QED  BY <7>1, <7>3, <3>2
+            <6>. QED  BY <6>3, <6>4
+          \* Part (c): for i, j both # src, distinct, both non-empty post,
+          \*           |table'[i]| # |table'[j]|.
+          <5>3. \A i, j \in 1..K :
+                   i # j /\ i # mod(ej'[self] + 1, K)
+                         /\ j # mod(ej'[self] + 1, K)
+                         /\ table'[i] # empty /\ table'[j] # empty =>
+                   abs(table'[i]) # abs(table'[j])
+            <6>. SUFFICES ASSUME NEW i \in 1..K, NEW j \in 1..K,
+                                  i # j,
+                                  i # mod(ej'[self] + 1, K),
+                                  j # mod(ej'[self] + 1, K),
+                                  table'[i] # empty,
+                                  table'[j] # empty
+                          PROVE  abs(table'[i]) # abs(table'[j])
+              OBVIOUS
+            <6>1. i # src /\ j # src  BY <5>Gpp
+            <6>2. CASE i = gap /\ j # gap
+              <7>1. table'[i] = table[src]  BY <4>3, <6>2
+              <7>2. table'[j] = table[j]  BY <4>4, <6>2
+              <7>3. src # gap /\ j # gap  BY <6>2, <6>1
+              <7>4. src # j  BY <6>1
+              <7>5. table[src] # empty  BY <7>1
+              <7>6. table[j] # empty  BY <7>2
+              <7>7. abs(table[src]) # abs(table[j])
+                BY <3>1, <7>3, <7>4, <7>5, <7>6, <4>1
+              <7>. QED  BY <7>1, <7>2, <7>7
+            <6>3. CASE j = gap /\ i # gap
+              <7>1. table'[j] = table[src]  BY <4>3, <6>3
+              <7>2. table'[i] = table[i]  BY <4>4, <6>3
+              <7>3. src # gap /\ i # gap  BY <6>3, <6>1
+              <7>4. i # src  BY <6>1
+              <7>5. table[src] # empty  BY <7>1
+              <7>6. table[i] # empty  BY <7>2
+              <7>7. abs(table[i]) # abs(table[src])
+                BY <3>1, <7>3, <7>4, <7>5, <7>6, <4>1
+              <7>. QED  BY <7>1, <7>2, <7>7
+            <6>4. CASE i # gap /\ j # gap
+              <7>1. table'[i] = table[i]  BY <4>4, <6>4
+              <7>2. table'[j] = table[j]  BY <4>4, <6>4
+              <7>3. i # gap /\ j # gap  BY <6>4
+              <7>4. table[i] # empty  BY <7>1
+              <7>5. table[j] # empty  BY <7>2
+              <7>6. abs(table[i]) # abs(table[j])
+                BY <3>1, <7>3, <7>4, <7>5
+              <7>. QED  BY <7>1, <7>2, <7>6
+            <6>5. CASE i = gap /\ j = gap
+              BY <6>5
+            <6>. QED  BY <6>2, <6>3, <6>4, <6>5
+          <5>. QED  BY <5>1, <5>2, <5>3
+        \* SortPermInv' conjuncts 1, 2 at self: pc'[self] \in
+        \*   {"nestedIns", "set"}, so not in {"waitIns", "strIns",
+        \*   "flush"} and not "strIns".  Vacuous for self.
+        <4>Self1. \A s2 \in ProcSet :
+                     pc'[s2] \in {"waitIns", "strIns", "flush"}
+                       => NoDupsTable'
+          <5>. SUFFICES ASSUME NEW s2 \in ProcSet,
+                                pc'[s2] \in {"waitIns", "strIns", "flush"}
+                        PROVE  NoDupsTable'
+            OBVIOUS
+          <5>1. s2 # self  BY <4>11
+          <5>2. pc'[s2] = pc[s2]  BY <5>1
+          <5>3. pc[s2] \in {"waitIns", "strIns", "flush"}  BY <5>2
+          <5>4. FALSE  BY <5>3, <2>Muex, <5>1
+          <5>. QED  BY <5>4
+        <4>Self2. \A s2 \in ProcSet :
+                     pc'[s2] = "strIns" => ej'[s2] = ei'[s2]
+          <5>. SUFFICES ASSUME NEW s2 \in ProcSet, pc'[s2] = "strIns"
+                        PROVE  ej'[s2] = ei'[s2]
+            OBVIOUS
+          <5>1. s2 # self  BY <4>11
+          <5>2. pc'[s2] = pc[s2]  BY <5>1
+          <5>3. pc[s2] = "strIns"  BY <5>2
+          <5>4. FALSE  BY <5>3, <2>Muex, <5>1
+          <5>. QED  BY <5>4
+        \* Other s2 conjunct 3: by mutex, pc[s2] not in {nestedIns, set}.
+        <4>Other3. \A s2 \in ProcSet :
+                      s2 # self /\ pc'[s2] \in {"nestedIns", "set"} =>
+                        /\ mod(ej'[s2] + 1, K) \in 1..K
+                        /\ (lo'[s2] # empty =>
+                              \A j \in 1..K :
+                                j # mod(ej'[s2] + 1, K)
+                                  /\ table'[j] # empty =>
+                                  abs(table'[j]) # abs(lo'[s2]))
+                        /\ \A i, j \in 1..K :
+                             i # j /\ i # mod(ej'[s2] + 1, K)
+                                   /\ j # mod(ej'[s2] + 1, K)
+                                   /\ table'[i] # empty
+                                   /\ table'[j] # empty =>
+                             abs(table'[i]) # abs(table'[j])
+          <5>. SUFFICES ASSUME NEW s2 \in ProcSet, s2 # self,
+                                pc'[s2] \in {"nestedIns", "set"}
+                        PROVE  FALSE
+            OBVIOUS
+          <5>1. pc'[s2] = pc[s2]  OBVIOUS
+          <5>2. pc[s2] \in {"nestedIns", "set"}  BY <5>1
+          <5>. QED  BY <5>2, <2>Muex
+        <4>. QED  BY <4>Self1, <4>Self2, <4>Self3, <4>Other3
+             DEF SortPermInv
+      <3>B. CASE ~(compare(lo[self], mod(ei[self] + 1, K),
+                            table[mod(ej[self], K)], mod(ej[self], K))
+                   <= -1)
+        \* ELSE: UNCHANGED <<table, ej>>.  pc'[self] = "set".  gapp = gap.
+        <4>. USE <3>B
+        <4>1. pc'[self] = "set"  OBVIOUS
+        <4>2. UNCHANGED <<table, ej>>  OBVIOUS
+        <4>3. ej'[self] = ej[self]  BY <4>2
+        <4>4. gapp = gap  BY <4>3
+        \* Self conjunct 3 post: same as pre (pc[self] = "nestedIns" was
+        \* in {nestedIns, set}).
+        <4>Self3. /\ mod(ej'[self] + 1, K) \in 1..K
+                  /\ (lo'[self] # empty =>
+                        \A j \in 1..K :
+                          j # mod(ej'[self] + 1, K)
+                            /\ table'[j] # empty =>
+                            abs(table'[j]) # abs(lo'[self]))
+                  /\ \A i, j \in 1..K :
+                       i # j /\ i # mod(ej'[self] + 1, K)
+                             /\ j # mod(ej'[self] + 1, K)
+                             /\ table'[i] # empty
+                             /\ table'[j] # empty =>
+                       abs(table'[i]) # abs(table'[j])
+          BY <3>1, <4>2, <4>4
+        \* Other s2: by mutex, not in triggers.  Vacuous.
+        <4>C1. \A s2 \in ProcSet :
+                  pc'[s2] \in {"waitIns", "strIns", "flush"}
+                    => NoDupsTable'
+          <5>. SUFFICES ASSUME NEW s2 \in ProcSet,
+                                pc'[s2] \in {"waitIns", "strIns", "flush"}
+                        PROVE  NoDupsTable'
+            OBVIOUS
+          <5>1. s2 # self  BY <4>1
+          <5>2. pc'[s2] = pc[s2]  BY <5>1
+          <5>3. pc[s2] \in {"waitIns", "strIns", "flush"}  BY <5>2
+          <5>. QED  BY <5>3, <2>Muex, <5>1
+        <4>C2. \A s2 \in ProcSet :
+                  pc'[s2] = "strIns" => ej'[s2] = ei'[s2]
+          <5>. SUFFICES ASSUME NEW s2 \in ProcSet, pc'[s2] = "strIns"
+                        PROVE  ej'[s2] = ei'[s2]
+            OBVIOUS
+          <5>1. s2 # self  BY <4>1
+          <5>2. pc'[s2] = pc[s2]  BY <5>1
+          <5>3. pc[s2] = "strIns"  BY <5>2
+          <5>. QED  BY <5>3, <2>Muex, <5>1
+        <4>C3. \A s2 \in ProcSet :
+                  pc'[s2] \in {"nestedIns", "set"} =>
+                    /\ mod(ej'[s2] + 1, K) \in 1..K
+                    /\ (lo'[s2] # empty =>
+                          \A j \in 1..K :
+                            j # mod(ej'[s2] + 1, K)
+                              /\ table'[j] # empty =>
+                              abs(table'[j]) # abs(lo'[s2]))
+                    /\ \A i, j \in 1..K :
+                         i # j /\ i # mod(ej'[s2] + 1, K)
+                               /\ j # mod(ej'[s2] + 1, K)
+                               /\ table'[i] # empty
+                               /\ table'[j] # empty =>
+                         abs(table'[i]) # abs(table'[j])
+          <5>. SUFFICES ASSUME NEW s2 \in ProcSet,
+                                pc'[s2] \in {"nestedIns", "set"}
+                        PROVE  /\ mod(ej'[s2] + 1, K) \in 1..K
+                               /\ (lo'[s2] # empty =>
+                                     \A j \in 1..K :
+                                       j # mod(ej'[s2] + 1, K)
+                                         /\ table'[j] # empty =>
+                                         abs(table'[j])
+                                           # abs(lo'[s2]))
+                               /\ \A i, j \in 1..K :
+                                    i # j
+                                      /\ i # mod(ej'[s2] + 1, K)
+                                      /\ j # mod(ej'[s2] + 1, K)
+                                      /\ table'[i] # empty
+                                      /\ table'[j] # empty =>
+                                    abs(table'[i]) # abs(table'[j])
+            OBVIOUS
+          <5>1. CASE s2 = self
+            BY <5>1, <4>Self3
+          <5>2. CASE s2 # self
+            <6>1. pc'[s2] = pc[s2]  BY <5>2
+            <6>2. pc[s2] \in {"nestedIns", "set"}  BY <6>1
+            <6>. QED  BY <6>2, <2>Muex, <5>2
+          <5>. QED  BY <5>1, <5>2
+        <4>. QED  BY <4>C1, <4>C2, <4>C3 DEF SortPermInv
+      <3>. QED  BY <3>A, <3>B
+    <2>3. CASE set(self)
+      \* The critical transition: pc' = "strIns", table[gap] <- lo[self],
+      \* ej' := ei + 1, ei' := ei + 1.  NoDupsTable' follows from the
+      \* pre-state sort-gap invariant (SortPermInv conjunct 3).
+      <3>. USE <2>3 DEF set
+      <3>1. pc[self] = "set"  OBVIOUS
+      <3>2. pc'[self] = "strIns"  OBVIOUS
+      <3>3. lo'[self] = lo[self]  OBVIOUS
+      <3>4. ej'[self] = ei[self] + 1  OBVIOUS
+      <3>5. ei'[self] = ei[self] + 1  OBVIOUS
+      <3>6. ej'[self] = ei'[self]  BY <3>4, <3>5
+      <3>7. table' = [table EXCEPT ![gap] = lo[self]]
+        OBVIOUS
+      <3>G. gap \in 1..K  BY <3>1
+      <3>8. table'[gap] = lo[self]  BY <3>7, <3>G
+      <3>9. \A k \in 1..K : k # gap => table'[k] = table[k]
+        BY <3>7, <3>G
+      \* Pre SortPermInv conjunct 3 at self.
+      <3>Lo. lo[self] # empty =>
+               \A j \in 1..K :
+                 j # gap /\ table[j] # empty =>
+                   abs(table[j]) # abs(lo[self])
+        BY <3>1
+      <3>Nd. \A i, j \in 1..K :
+                i # j /\ i # gap /\ j # gap /\
+                table[i] # empty /\ table[j] # empty =>
+                  abs(table[i]) # abs(table[j])
+        BY <3>1
+      \* NoDupsTable' at self's post-state pc = "strIns".
+      <3>NdT. NoDupsTable'
+        <4>. SUFFICES ASSUME NEW i \in 1..K, NEW j \in 1..K,
+                              i # j, table'[i] # empty, table'[j] # empty
+                      PROVE  abs(table'[i]) # abs(table'[j])
+          BY DEF NoDupsTable
+        <4>1. CASE i = gap /\ j # gap
+          <5>1. table'[i] = lo[self]  BY <3>8, <4>1
+          <5>2. table'[j] = table[j]  BY <3>9, <4>1
+          <5>3. lo[self] # empty  BY <5>1
+          <5>4. j # gap /\ table[j] # empty  BY <4>1, <5>2
+          <5>5. abs(table[j]) # abs(lo[self])  BY <3>Lo, <5>3, <5>4
+          <5>. QED  BY <5>1, <5>2, <5>5
+        <4>2. CASE j = gap /\ i # gap
+          <5>1. table'[j] = lo[self]  BY <3>8, <4>2
+          <5>2. table'[i] = table[i]  BY <3>9, <4>2
+          <5>3. lo[self] # empty  BY <5>1
+          <5>4. i # gap /\ table[i] # empty  BY <4>2, <5>2
+          <5>5. abs(table[i]) # abs(lo[self])  BY <3>Lo, <5>3, <5>4
+          <5>. QED  BY <5>1, <5>2, <5>5
+        <4>3. CASE i # gap /\ j # gap
+          <5>1. table'[i] = table[i]  BY <3>9, <4>3
+          <5>2. table'[j] = table[j]  BY <3>9, <4>3
+          <5>3. i # gap /\ j # gap  BY <4>3
+          <5>4. table[i] # empty /\ table[j] # empty  BY <5>1, <5>2
+          <5>5. abs(table[i]) # abs(table[j])  BY <3>Nd, <5>3, <5>4
+          <5>. QED  BY <5>1, <5>2, <5>5
+        <4>4. CASE i = gap /\ j = gap
+          BY <4>4
+        <4>. QED  BY <4>1, <4>2, <4>3, <4>4
+      \* Close SortPermInv' conjuncts.
+      <3>C1. \A s2 \in ProcSet :
+                pc'[s2] \in {"waitIns", "strIns", "flush"}
+                  => NoDupsTable'
+        BY <3>NdT
+      <3>C2. \A s2 \in ProcSet :
+                pc'[s2] = "strIns" => ej'[s2] = ei'[s2]
+        <4>. SUFFICES ASSUME NEW s2 \in ProcSet, pc'[s2] = "strIns"
+                      PROVE  ej'[s2] = ei'[s2]
+          OBVIOUS
+        <4>1. CASE s2 = self
+          BY <4>1, <3>6
+        <4>2. CASE s2 # self
+          <5>1. pc'[s2] = pc[s2]  BY <4>2
+          <5>2. pc[s2] = "strIns"  BY <5>1
+          <5>3. ej[s2] = ei[s2]  BY <5>2
+          <5>4. ej'[s2] = ej[s2] /\ ei'[s2] = ei[s2]  BY <4>2
+          <5>. QED  BY <5>3, <5>4
+        <4>. QED  BY <4>1, <4>2
+      <3>C3. \A s2 \in ProcSet :
+                pc'[s2] \in {"nestedIns", "set"} =>
+                  /\ mod(ej'[s2] + 1, K) \in 1..K
+                  /\ (lo'[s2] # empty =>
+                        \A j \in 1..K :
+                          j # mod(ej'[s2] + 1, K)
+                            /\ table'[j] # empty =>
+                            abs(table'[j]) # abs(lo'[s2]))
+                  /\ \A i, j \in 1..K :
+                       i # j /\ i # mod(ej'[s2] + 1, K)
+                             /\ j # mod(ej'[s2] + 1, K)
+                             /\ table'[i] # empty
+                             /\ table'[j] # empty =>
+                       abs(table'[i]) # abs(table'[j])
+        <4>. SUFFICES ASSUME NEW s2 \in ProcSet,
+                              pc'[s2] \in {"nestedIns", "set"}
+                      PROVE  FALSE
+          OBVIOUS
+        <4>1. s2 # self  BY <3>2
+        <4>2. pc'[s2] = pc[s2]  BY <4>1
+        <4>3. pc[s2] \in {"nestedIns", "set"}  BY <4>2
+        <4>. QED  BY <4>3, <2>Muex, <4>1
+      <3>. QED  BY <3>C1, <3>C2, <3>C3 DEF SortPermInv
+    <2>4. CASE flush(self)
+      <3>. USE <2>4 DEF flush
+      <3>1. pc[self] = "flush"  OBVIOUS
+      <3>2. NoDupsTable  BY <3>1
+      <3>A. CASE ei[self] <= K+L
+        <4>. USE <3>A
+        <4>1. pc'[self] = "flush"  OBVIOUS
+        <4>2. lo'[self] = table[mod(ei[self], K)]  OBVIOUS
+        <4>3. ej'[self] = ej[self]  OBVIOUS
+        \* Pin mod(ei[self], K) \in 1..K via EiType.
+        <4>4. ei[self] \in Nat  BY ProcSetIsWriter
+        <4>5. ei[self] % K \in 0..(K-1)
+          <5>1. K \in Nat \ {0}  BY OAAssumption
+          <5>. QED  BY <4>4, <5>1
+        <4>6. mod(ei[self], K) \in 1..K
+          <5>1. K \in Nat \ {0}  BY OAAssumption
+          <5>. QED  BY <5>1, <4>5 DEF mod
+        \* Inner THEN / ELSE differ only in whether table is updated.
+        \* In both cases, |table'[i]| = |table[i]| for all i (negate-in-
+        \* place preserves absolute value).
+        <4>NdT. NoDupsTable'
+          <5>. SUFFICES ASSUME NEW i \in 1..K, NEW j \in 1..K,
+                                i # j, table'[i] # empty, table'[j] # empty
+                        PROVE  abs(table'[i]) # abs(table'[j])
+            BY DEF NoDupsTable
+          <5>A. CASE lo'[self] # empty /\
+                     lo'[self] > largestElem(newexternal) /\
+                     ((ei[self] <= K /\ ~wrapped(lo'[self],ei[self])) \/
+                      (ei[self] > K /\ wrapped(lo'[self],ei[self])))
+            \* Inner THEN: table'[mod(ei, K)] = lo'[self] * -1.
+            <6>. USE <5>A
+            <6>. DEFINE pos == mod(ei[self], K)
+            <6>1. table' = [table EXCEPT ![pos] = lo'[self] * (-1)]
+              OBVIOUS
+            <6>2. table'[pos] = lo'[self] * (-1)  BY <6>1, <4>6
+            <6>3. \A k \in 1..K : k # pos => table'[k] = table[k]
+              BY <6>1, <4>6
+            <6>4. lo'[self] # empty  OBVIOUS
+            <6>5. table[pos] # empty
+              BY <4>2, <6>4
+            <6>6. table[pos] \in TableValues
+              BY <4>6
+            <6>8. abs(table'[pos]) = abs(table[pos])
+              <7>. USE DEF abs
+              <7>1. table'[pos] = table[pos] * (-1)  BY <6>2, <4>2
+              <7>2. table[pos] \in Int  BY <6>6 DEF TableValues
+              <7>. QED  BY <7>1, <7>2
+            <6>9. \A k \in 1..K : abs(table'[k]) = abs(table[k])
+              <7>. SUFFICES ASSUME NEW k \in 1..K
+                            PROVE  abs(table'[k]) = abs(table[k])
+                OBVIOUS
+              <7>1. CASE k = pos  BY <7>1, <6>8
+              <7>2. CASE k # pos  BY <7>2, <6>3
+              <7>. QED  BY <7>1, <7>2
+            <6>10. \A k \in 1..K : (table'[k] # empty) <=> (table[k] # empty)
+              <7>. SUFFICES ASSUME NEW k \in 1..K
+                            PROVE  (table'[k] # empty) <=> (table[k] # empty)
+                OBVIOUS
+              <7>1. CASE k = pos
+                <8>1. table'[k] = table[pos] * (-1)  BY <6>2, <7>1
+                <8>2. table[pos] \in Int  BY <6>6 DEF TableValues
+                <8>. QED  BY <8>1, <8>2, <7>1 DEF empty
+              <7>2. CASE k # pos  BY <7>2, <6>3
+              <7>. QED  BY <7>1, <7>2
+            <6>11. table[i] # empty /\ table[j] # empty  BY <6>10
+            <6>12. abs(table[i]) # abs(table[j])
+              BY <3>2, <6>11 DEF NoDupsTable
+            <6>. QED  BY <6>9, <6>12
+          <5>B. CASE ~(lo'[self] # empty /\
+                      lo'[self] > largestElem(newexternal) /\
+                      ((ei[self] <= K /\ ~wrapped(lo'[self],ei[self])) \/
+                       (ei[self] > K /\ wrapped(lo'[self],ei[self]))))
+            \* Inner ELSE: UNCHANGED table.
+            <6>1. UNCHANGED table  BY <5>B
+            <6>2. abs(table[i]) # abs(table[j])
+              BY <3>2, <6>1 DEF NoDupsTable
+            <6>. QED  BY <6>1, <6>2
+          <5>. QED  BY <5>A, <5>B
+        \* Close SortPermInv' conjuncts.
+        <4>C1. \A s2 \in ProcSet :
+                  pc'[s2] \in {"waitIns", "strIns", "flush"}
+                    => NoDupsTable'
+          BY <4>NdT
+        <4>C2. \A s2 \in ProcSet :
+                  pc'[s2] = "strIns" => ej'[s2] = ei'[s2]
+          <5>. SUFFICES ASSUME NEW s2 \in ProcSet, pc'[s2] = "strIns"
+                        PROVE  ej'[s2] = ei'[s2]
+            OBVIOUS
+          <5>1. s2 # self  BY <4>1
+          <5>2. pc'[s2] = pc[s2]  BY <5>1
+          <5>3. pc[s2] = "strIns"  BY <5>2
+          <5>4. s2 = self  BY <5>3, <2>Muex
+          <5>. QED  BY <5>1, <5>4
+        <4>C3. \A s2 \in ProcSet :
+                  pc'[s2] \in {"nestedIns", "set"} =>
+                    /\ mod(ej'[s2] + 1, K) \in 1..K
+                    /\ (lo'[s2] # empty =>
+                          \A j \in 1..K :
+                            j # mod(ej'[s2] + 1, K)
+                              /\ table'[j] # empty =>
+                              abs(table'[j]) # abs(lo'[s2]))
+                    /\ \A i, j \in 1..K :
+                         i # j /\ i # mod(ej'[s2] + 1, K)
+                               /\ j # mod(ej'[s2] + 1, K)
+                               /\ table'[i] # empty
+                               /\ table'[j] # empty =>
+                         abs(table'[i]) # abs(table'[j])
+          <5>. SUFFICES ASSUME NEW s2 \in ProcSet,
+                                pc'[s2] \in {"nestedIns", "set"}
+                        PROVE  FALSE
+            OBVIOUS
+          <5>1. s2 # self  BY <4>1
+          <5>2. pc'[s2] = pc[s2]  BY <5>1
+          <5>3. pc[s2] \in {"nestedIns", "set"}  BY <5>2
+          <5>. QED  BY <5>3, <2>Muex, <5>1
+        <4>. QED  BY <4>C1, <4>C2, <4>C3 DEF SortPermInv
+      <3>B. CASE ~(ei[self] <= K+L)
+        <4>. USE <3>B
+        <4>1. pc'[self] = "rtrn"  OBVIOUS
+        <4>2. UNCHANGED <<table, ei, ej, lo>>
+          <5>1. UNCHANGED <<table, ei, lo>>  OBVIOUS
+          <5>. QED  BY <5>1
+        <4>C1. \A s2 \in ProcSet :
+                  pc'[s2] \in {"waitIns", "strIns", "flush"}
+                    => NoDupsTable'
+          <5>. SUFFICES ASSUME NEW s2 \in ProcSet,
+                                pc'[s2] \in {"waitIns", "strIns", "flush"}
+                        PROVE  NoDupsTable'
+            OBVIOUS
+          <5>1. s2 # self  BY <4>1
+          <5>2. pc'[s2] = pc[s2]  BY <5>1
+          <5>3. pc[s2] \in {"waitIns", "strIns", "flush"}  BY <5>2
+          <5>4. NoDupsTable  BY <5>3
+          <5>. QED  BY <5>4, <4>2
+        <4>C2. \A s2 \in ProcSet :
+                  pc'[s2] = "strIns" => ej'[s2] = ei'[s2]
+          <5>. SUFFICES ASSUME NEW s2 \in ProcSet, pc'[s2] = "strIns"
+                        PROVE  ej'[s2] = ei'[s2]
+            OBVIOUS
+          <5>1. s2 # self  BY <4>1
+          <5>2. pc'[s2] = pc[s2]  BY <5>1
+          <5>3. pc[s2] = "strIns"  BY <5>2
+          <5>4. ej[s2] = ei[s2]  BY <5>3
+          <5>5. ej'[s2] = ej[s2] /\ ei'[s2] = ei[s2]  BY <5>1
+          <5>. QED  BY <5>4, <5>5
+        <4>C3. \A s2 \in ProcSet :
+                  pc'[s2] \in {"nestedIns", "set"} =>
+                    /\ mod(ej'[s2] + 1, K) \in 1..K
+                    /\ (lo'[s2] # empty =>
+                          \A j \in 1..K :
+                            j # mod(ej'[s2] + 1, K)
+                              /\ table'[j] # empty =>
+                              abs(table'[j]) # abs(lo'[s2]))
+                    /\ \A i, j \in 1..K :
+                         i # j /\ i # mod(ej'[s2] + 1, K)
+                               /\ j # mod(ej'[s2] + 1, K)
+                               /\ table'[i] # empty
+                               /\ table'[j] # empty =>
+                         abs(table'[i]) # abs(table'[j])
+          <5>. SUFFICES ASSUME NEW s2 \in ProcSet,
+                                pc'[s2] \in {"nestedIns", "set"}
+                        PROVE  /\ mod(ej'[s2] + 1, K) \in 1..K
+                               /\ (lo'[s2] # empty =>
+                                     \A j \in 1..K :
+                                       j # mod(ej'[s2] + 1, K)
+                                         /\ table'[j] # empty =>
+                                         abs(table'[j])
+                                           # abs(lo'[s2]))
+                               /\ \A i, j \in 1..K :
+                                    i # j
+                                      /\ i # mod(ej'[s2] + 1, K)
+                                      /\ j # mod(ej'[s2] + 1, K)
+                                      /\ table'[i] # empty
+                                      /\ table'[j] # empty =>
+                                    abs(table'[i]) # abs(table'[j])
+            OBVIOUS
+          <5>1. s2 # self  BY <4>1
+          <5>2. pc'[s2] = pc[s2]  BY <5>1
+          <5>3. pc[s2] \in {"nestedIns", "set"}  BY <5>2
+          <5>4. ej'[s2] = ej[s2]  BY <5>1
+          <5>5. lo'[s2] = lo[s2]  BY <5>1
+          <5>. QED  BY <5>3, <5>4, <5>5, <4>2
+        <4>. QED  BY <4>C1, <4>C2, <4>C3 DEF SortPermInv
+      <3>. QED  BY <3>A, <3>B
+    <2>5. CASE rtrn(self)
+      \* pc[self] = "rtrn" (not in any SortPermInv trigger at self since
+      \* rtrn is handled by DupInv's third conjunct); pc'[self] = "endEv".
+      \* Table unchanged, so conjuncts at other s2 preserved.
+      <3>. USE <2>5 DEF rtrn
+      <3>1. pc[self] = "rtrn"  OBVIOUS
+      <3>2. pc'[self] = Head(stack[self]).pc  OBVIOUS
+      <3>3. stack[self] # <<>>  BY <3>1
+      <3>4. Head(stack[self]).pc = "endEv"  BY <3>1, <3>3
+      <3>5. pc'[self] = "endEv"  BY <3>2, <3>4
+      <3>6. UNCHANGED table  OBVIOUS
+      <3>C1. \A s2 \in ProcSet :
+                pc'[s2] \in {"waitIns", "strIns", "flush"}
+                  => NoDupsTable'
+        <4>. SUFFICES ASSUME NEW s2 \in ProcSet,
+                              pc'[s2] \in {"waitIns", "strIns", "flush"}
+                      PROVE  NoDupsTable'
+          OBVIOUS
+        <4>1. s2 # self  BY <3>5
+        <4>2. pc'[s2] = pc[s2]  BY <4>1
+        <4>3. pc[s2] \in {"waitIns", "strIns", "flush"}  BY <4>2
+        <4>4. NoDupsTable  BY <4>3
+        <4>. QED  BY <4>4, <3>6
+      <3>C2. \A s2 \in ProcSet :
+                pc'[s2] = "strIns" => ej'[s2] = ei'[s2]
+        <4>. SUFFICES ASSUME NEW s2 \in ProcSet, pc'[s2] = "strIns"
+                      PROVE  ej'[s2] = ei'[s2]
+          OBVIOUS
+        <4>1. s2 # self  BY <3>5
+        <4>2. pc'[s2] = pc[s2]  BY <4>1
+        <4>3. pc[s2] = "strIns"  BY <4>2
+        <4>4. ej[s2] = ei[s2]  BY <4>3
+        <4>5. ej'[s2] = ej[s2] /\ ei'[s2] = ei[s2]  BY <4>1
+        <4>. QED  BY <4>4, <4>5
+      <3>C3. \A s2 \in ProcSet :
+                pc'[s2] \in {"nestedIns", "set"} =>
+                  /\ mod(ej'[s2] + 1, K) \in 1..K
+                  /\ (lo'[s2] # empty =>
+                        \A j \in 1..K :
+                          j # mod(ej'[s2] + 1, K)
+                            /\ table'[j] # empty =>
+                            abs(table'[j]) # abs(lo'[s2]))
+                  /\ \A i, j \in 1..K :
+                       i # j /\ i # mod(ej'[s2] + 1, K)
+                             /\ j # mod(ej'[s2] + 1, K)
+                             /\ table'[i] # empty
+                             /\ table'[j] # empty =>
+                       abs(table'[i]) # abs(table'[j])
+        <4>. SUFFICES ASSUME NEW s2 \in ProcSet,
+                              pc'[s2] \in {"nestedIns", "set"}
+                      PROVE  /\ mod(ej'[s2] + 1, K) \in 1..K
+                             /\ (lo'[s2] # empty =>
+                                   \A j \in 1..K :
+                                     j # mod(ej'[s2] + 1, K)
+                                       /\ table'[j] # empty =>
+                                       abs(table'[j])
+                                         # abs(lo'[s2]))
+                             /\ \A i, j \in 1..K :
+                                  i # j
+                                    /\ i # mod(ej'[s2] + 1, K)
+                                    /\ j # mod(ej'[s2] + 1, K)
+                                    /\ table'[i] # empty
+                                    /\ table'[j] # empty =>
+                                  abs(table'[i]) # abs(table'[j])
+          OBVIOUS
+        <4>1. s2 # self  BY <3>5
+        <4>2. pc'[s2] = pc[s2]  BY <4>1
+        <4>3. pc[s2] \in {"nestedIns", "set"}  BY <4>2
+        <4>4. ej'[s2] = ej[s2]  BY <4>1
+        <4>5. lo'[s2] = lo[s2]  BY <4>1
+        <4>. QED  BY <4>3, <4>4, <4>5, <3>6
+      <3>. QED  BY <3>C1, <3>C2, <3>C3 DEF SortPermInv
+    <2>. QED  BY <2>1, <2>2, <2>3, <2>4, <2>5
+  <1>3. ASSUME NEW self \in Writer, p(self)
+        PROVE  SortPermInv'
+    <2>. USE <1>3, ProcSetIsWriter DEF p
+    \* Helper: at non-Evict labels, `evict' has no relation to self.
+    \* We split on the 13 writer sub-actions and handle each.
+    <2>1. CASE pick(self)
+      <3>. USE <2>1 DEF pick
+      <3>1. pc[self] = "pick"  OBVIOUS
+      <3>2. pc'[self] \in {"put", "Done"}  OBVIOUS
+      <3>3. UNCHANGED <<table, ei, ej, lo>>  OBVIOUS
+      \* pc'[self] not in any SortPermInv trigger.  For OTHER s2 at
+      \* triggers, pc'[s2] = pc[s2], variables unchanged, so conjuncts
+      \* preserved directly from pre-state.
+      <3>4. \A s2 \in ProcSet : s2 # self =>
+                /\ pc'[s2] = pc[s2]
+                /\ ej'[s2] = ej[s2]
+                /\ ei'[s2] = ei[s2]
+                /\ lo'[s2] = lo[s2]
+        OBVIOUS
+      <3>C1. \A s2 \in ProcSet :
+                pc'[s2] \in {"waitIns", "strIns", "flush"}
+                  => NoDupsTable'
+        <4>. SUFFICES ASSUME NEW s2 \in ProcSet,
+                              pc'[s2] \in {"waitIns", "strIns", "flush"}
+                      PROVE  NoDupsTable'
+          OBVIOUS
+        <4>1. s2 # self  BY <3>2
+        <4>2. pc[s2] \in {"waitIns", "strIns", "flush"}  BY <4>1, <3>4
+        <4>3. NoDupsTable  BY <4>2
+        <4>. QED  BY <4>3, <3>3
+      <3>C2. \A s2 \in ProcSet :
+                pc'[s2] = "strIns" => ej'[s2] = ei'[s2]
+        <4>. SUFFICES ASSUME NEW s2 \in ProcSet, pc'[s2] = "strIns"
+                      PROVE  ej'[s2] = ei'[s2]
+          OBVIOUS
+        <4>1. s2 # self  BY <3>2
+        <4>. QED  BY <4>1, <3>4
+      <3>C3. \A s2 \in ProcSet :
+                pc'[s2] \in {"nestedIns", "set"} =>
+                  /\ mod(ej'[s2] + 1, K) \in 1..K
+                  /\ (lo'[s2] # empty =>
+                        \A j \in 1..K :
+                          j # mod(ej'[s2] + 1, K)
+                            /\ table'[j] # empty =>
+                            abs(table'[j]) # abs(lo'[s2]))
+                  /\ \A i, j \in 1..K :
+                       i # j /\ i # mod(ej'[s2] + 1, K)
+                             /\ j # mod(ej'[s2] + 1, K)
+                             /\ table'[i] # empty
+                             /\ table'[j] # empty =>
+                       abs(table'[i]) # abs(table'[j])
+        <4>. SUFFICES ASSUME NEW s2 \in ProcSet,
+                              pc'[s2] \in {"nestedIns", "set"}
+                      PROVE  /\ mod(ej'[s2] + 1, K) \in 1..K
+                             /\ (lo'[s2] # empty =>
+                                   \A j \in 1..K :
+                                     j # mod(ej'[s2] + 1, K)
+                                       /\ table'[j] # empty =>
+                                       abs(table'[j])
+                                         # abs(lo'[s2]))
+                             /\ \A i, j \in 1..K :
+                                  i # j
+                                    /\ i # mod(ej'[s2] + 1, K)
+                                    /\ j # mod(ej'[s2] + 1, K)
+                                    /\ table'[i] # empty
+                                    /\ table'[j] # empty =>
+                                  abs(table'[i]) # abs(table'[j])
+          OBVIOUS
+        <4>1. s2 # self  BY <3>2
+        <4>. QED  BY <4>1, <3>4, <3>3
+      <3>. QED  BY <3>C1, <3>C2, <3>C3 DEF SortPermInv
+    <2>2. CASE put(self)
+      <3>. USE <2>2 DEF put
+      <3>1. pc[self] = "put"  OBVIOUS
+      <3>2. pc'[self] \in {"chkSnc", "waitEv"}  OBVIOUS
+      <3>3. UNCHANGED <<table, ei, ej, lo>>  OBVIOUS
+      <3>4. \A s2 \in ProcSet : s2 # self =>
+                /\ pc'[s2] = pc[s2]
+                /\ ej'[s2] = ej[s2]
+                /\ ei'[s2] = ei[s2]
+                /\ lo'[s2] = lo[s2]
+        OBVIOUS
+      <3>. HIDE DEF put
+      <3>C1. \A s2 \in ProcSet :
+                pc'[s2] \in {"waitIns", "strIns", "flush"}
+                  => NoDupsTable'
+        <4>. SUFFICES ASSUME NEW s2 \in ProcSet,
+                              pc'[s2] \in {"waitIns", "strIns", "flush"}
+                      PROVE  NoDupsTable'
+          OBVIOUS
+        <4>1. s2 # self  BY <3>2
+        <4>2. pc[s2] \in {"waitIns", "strIns", "flush"}  BY <4>1, <3>4
+        <4>. QED  BY <4>2, <3>3
+      <3>C2. \A s2 \in ProcSet :
+                pc'[s2] = "strIns" => ej'[s2] = ei'[s2]
+        <4>. SUFFICES ASSUME NEW s2 \in ProcSet, pc'[s2] = "strIns"
+                      PROVE  ej'[s2] = ei'[s2]
+          OBVIOUS
+        <4>1. s2 # self  BY <3>2
+        <4>. QED  BY <4>1, <3>4
+      <3>C3. \A s2 \in ProcSet :
+                pc'[s2] \in {"nestedIns", "set"} =>
+                  /\ mod(ej'[s2] + 1, K) \in 1..K
+                  /\ (lo'[s2] # empty =>
+                        \A j \in 1..K :
+                          j # mod(ej'[s2] + 1, K)
+                            /\ table'[j] # empty =>
+                            abs(table'[j]) # abs(lo'[s2]))
+                  /\ \A i, j \in 1..K :
+                       i # j /\ i # mod(ej'[s2] + 1, K)
+                             /\ j # mod(ej'[s2] + 1, K)
+                             /\ table'[i] # empty
+                             /\ table'[j] # empty =>
+                       abs(table'[i]) # abs(table'[j])
+        <4>. SUFFICES ASSUME NEW s2 \in ProcSet,
+                              pc'[s2] \in {"nestedIns", "set"}
+                      PROVE  /\ mod(ej'[s2] + 1, K) \in 1..K
+                             /\ (lo'[s2] # empty =>
+                                   \A j \in 1..K :
+                                     j # mod(ej'[s2] + 1, K)
+                                       /\ table'[j] # empty =>
+                                       abs(table'[j])
+                                         # abs(lo'[s2]))
+                             /\ \A i, j \in 1..K :
+                                  i # j
+                                    /\ i # mod(ej'[s2] + 1, K)
+                                    /\ j # mod(ej'[s2] + 1, K)
+                                    /\ table'[i] # empty
+                                    /\ table'[j] # empty =>
+                                  abs(table'[i]) # abs(table'[j])
+          OBVIOUS
+        <4>1. s2 # self  BY <3>2
+        <4>. QED  BY <4>1, <3>4, <3>3
+      <3>. QED  BY <3>C1, <3>C2, <3>C3 DEF SortPermInv
+    <2>3. CASE waitEv(self)
+      \* pc[self] = "waitEv", pc'[self] \in {"endWEv", "put", "pick"}.
+      \* UNCHANGED <<table, ei, ej, lo>>.  Structurally identical to <2>1.
+      <3>. USE <2>3 DEF waitEv
+      <3>1. pc'[self] \notin {"waitIns", "strIns", "flush",
+                               "nestedIns", "set"}
+        OBVIOUS
+      <3>2. UNCHANGED <<table, ei, ej, lo>>  OBVIOUS
+      <3>3. \A s2 \in ProcSet : s2 # self =>
+                /\ pc'[s2] = pc[s2]
+                /\ ej'[s2] = ej[s2]
+                /\ ei'[s2] = ei[s2]
+                /\ lo'[s2] = lo[s2]
+        OBVIOUS
+      <3>. QED  BY <3>1, <3>2, <3>3 DEF SortPermInv
+    <2>4. CASE endWEv(self)
+      <3>. USE <2>4 DEF endWEv
+      <3>1. pc'[self] \notin {"waitIns", "strIns", "flush",
+                               "nestedIns", "set"}
+        OBVIOUS
+      <3>2. UNCHANGED <<table, ei, ej, lo>>  OBVIOUS
+      <3>3. \A s2 \in ProcSet : s2 # self =>
+                /\ pc'[s2] = pc[s2]
+                /\ ej'[s2] = ej[s2]
+                /\ ei'[s2] = ei[s2]
+                /\ lo'[s2] = lo[s2]
+        OBVIOUS
+      <3>. QED  BY <3>1, <3>2, <3>3 DEF SortPermInv
+    <2>5. CASE chkSnc(self)
+      <3>. USE <2>5 DEF chkSnc
+      <3>1. pc'[self] \notin {"waitIns", "strIns", "flush",
+                               "nestedIns", "set"}
+        OBVIOUS
+      <3>2. UNCHANGED <<table, ei, ej, lo>>  OBVIOUS
+      <3>3. \A s2 \in ProcSet : s2 # self =>
+                /\ pc'[s2] = pc[s2]
+                /\ ej'[s2] = ej[s2]
+                /\ ei'[s2] = ei[s2]
+                /\ lo'[s2] = lo[s2]
+        OBVIOUS
+      <3>. QED  BY <3>1, <3>2, <3>3 DEF SortPermInv
+    <2>6. CASE cntns(self)
+      <3>. USE <2>6 DEF cntns
+      <3>1. pc'[self] \notin {"waitIns", "strIns", "flush",
+                               "nestedIns", "set"}
+        OBVIOUS
+      <3>2. UNCHANGED <<table, ei, ej, lo>>  OBVIOUS
+      <3>3. \A s2 \in ProcSet : s2 # self =>
+                /\ pc'[s2] = pc[s2]
+                /\ ej'[s2] = ej[s2]
+                /\ ei'[s2] = ei[s2]
+                /\ lo'[s2] = lo[s2]
+        OBVIOUS
+      <3>. QED  BY <3>1, <3>2, <3>3 DEF SortPermInv
+    <2>7. CASE onSnc(self)
+      <3>. USE <2>7 DEF onSnc
+      <3>1. pc'[self] \notin {"waitIns", "strIns", "flush",
+                               "nestedIns", "set"}
+        OBVIOUS
+      <3>2. UNCHANGED <<table, ei, ej, lo>>  OBVIOUS
+      <3>3. \A s2 \in ProcSet : s2 # self =>
+                /\ pc'[s2] = pc[s2]
+                /\ ej'[s2] = ej[s2]
+                /\ ei'[s2] = ei[s2]
+                /\ lo'[s2] = lo[s2]
+        OBVIOUS
+      <3>. QED  BY <3>1, <3>2, <3>3 DEF SortPermInv
+    <2>8. CASE insrt(self)
+      <3>. USE <2>8 DEF insrt
+      <3>1. pc'[self] \notin {"waitIns", "strIns", "flush",
+                               "nestedIns", "set"}
+        OBVIOUS
+      <3>2. UNCHANGED <<table, ei, ej, lo>>  OBVIOUS
+      <3>3. \A s2 \in ProcSet : s2 # self =>
+                /\ pc'[s2] = pc[s2]
+                /\ ej'[s2] = ej[s2]
+                /\ ei'[s2] = ei[s2]
+                /\ lo'[s2] = lo[s2]
+        OBVIOUS
+      <3>. QED  BY <3>1, <3>2, <3>3 DEF SortPermInv
+    <2>9. CASE isMth(self)
+      <3>. USE <2>9 DEF isMth
+      <3>1. pc'[self] \notin {"waitIns", "strIns", "flush",
+                               "nestedIns", "set"}
+        OBVIOUS
+      <3>2. UNCHANGED <<table, ei, ej, lo>>  OBVIOUS
+      <3>3. \A s2 \in ProcSet : s2 # self =>
+                /\ pc'[s2] = pc[s2]
+                /\ ej'[s2] = ej[s2]
+                /\ ei'[s2] = ei[s2]
+                /\ lo'[s2] = lo[s2]
+        OBVIOUS
+      <3>. QED  BY <3>1, <3>2, <3>3 DEF SortPermInv
+    <2>10. CASE cas(self)
+      \* Split into failed- and successful-CAS branches, exactly
+      \* mirroring the `cas` case of `DupInvNext' (and its known deep
+      \* OMITTED -- the "probe-sequence correctness" property of open
+      \* addressing, aka the "no duplicate fingerprint insertion" claim
+      \* at successful CAS).
+      <3>. USE <2>10 DEF cas
+      <3>1. pc[self] = "cas"  OBVIOUS
+      <3>2. pc'[self] \in {"pick", "insrt"}  OBVIOUS
+      <3>3. UNCHANGED <<ei, ej, lo>>  OBVIOUS
+      <3>A. CASE ~(table[idx(fp[self],index[self])] = expected[self])
+        \* Failed CAS: table UNCHANGED, pc'[self] = "insrt".
+        <4>. USE <3>A
+        <4>1. UNCHANGED table  OBVIOUS
+        <4>2a. result' = [result EXCEPT ![self] = FALSE]  OBVIOUS
+        <4>2b. self \in DOMAIN result  BY ProcSetIsWriter DEF ResultType
+        <4>2c. result'[self] = FALSE  BY <4>2a, <4>2b
+        <4>2. pc'[self] = "insrt"  BY <4>2c
+        <4>3. \A s2 \in ProcSet : s2 # self =>
+                  /\ pc'[s2] = pc[s2]
+                  /\ ej'[s2] = ej[s2]
+                  /\ ei'[s2] = ei[s2]
+                  /\ lo'[s2] = lo[s2]
+          OBVIOUS
+        <4>C1. \A s2 \in ProcSet :
+                  pc'[s2] \in {"waitIns", "strIns", "flush"}
+                    => NoDupsTable'
+          <5>. SUFFICES ASSUME NEW s2 \in ProcSet,
+                                pc'[s2] \in {"waitIns", "strIns", "flush"}
+                        PROVE  NoDupsTable'
+            OBVIOUS
+          <5>1. s2 # self  BY <4>2
+          <5>2. pc[s2] \in {"waitIns", "strIns", "flush"}
+            BY <5>1, <4>3
+          <5>3. NoDupsTable  BY <5>2
+          <5>. QED  BY <5>3, <4>1
+        <4>C2. \A s2 \in ProcSet :
+                  pc'[s2] = "strIns" => ej'[s2] = ei'[s2]
+          <5>. SUFFICES ASSUME NEW s2 \in ProcSet, pc'[s2] = "strIns"
+                        PROVE  ej'[s2] = ei'[s2]
+            OBVIOUS
+          <5>1. s2 # self  BY <4>2
+          <5>2. pc[s2] = "strIns"  BY <5>1, <4>3
+          <5>3. ej[s2] = ei[s2]  BY <5>2
+          <5>. QED  BY <5>3, <5>1, <4>3
+        <4>C3. \A s2 \in ProcSet :
+                  pc'[s2] \in {"nestedIns", "set"} =>
+                    /\ mod(ej'[s2] + 1, K) \in 1..K
+                    /\ (lo'[s2] # empty =>
+                          \A j \in 1..K :
+                            j # mod(ej'[s2] + 1, K)
+                              /\ table'[j] # empty =>
+                              abs(table'[j]) # abs(lo'[s2]))
+                    /\ \A i, j \in 1..K :
+                         i # j /\ i # mod(ej'[s2] + 1, K)
+                               /\ j # mod(ej'[s2] + 1, K)
+                               /\ table'[i] # empty
+                               /\ table'[j] # empty =>
+                         abs(table'[i]) # abs(table'[j])
+          <5>. SUFFICES ASSUME NEW s2 \in ProcSet,
+                                pc'[s2] \in {"nestedIns", "set"}
+                        PROVE  /\ mod(ej'[s2] + 1, K) \in 1..K
+                               /\ (lo'[s2] # empty =>
+                                     \A j \in 1..K :
+                                       j # mod(ej'[s2] + 1, K)
+                                         /\ table'[j] # empty =>
+                                         abs(table'[j])
+                                           # abs(lo'[s2]))
+                               /\ \A i, j \in 1..K :
+                                    i # j
+                                      /\ i # mod(ej'[s2] + 1, K)
+                                      /\ j # mod(ej'[s2] + 1, K)
+                                      /\ table'[i] # empty
+                                      /\ table'[j] # empty =>
+                                    abs(table'[i]) # abs(table'[j])
+            OBVIOUS
+          <5>1. s2 # self  BY <4>2
+          <5>2. pc[s2] \in {"nestedIns", "set"}  BY <5>1, <4>3
+          <5>3. ej'[s2] = ej[s2] /\ lo'[s2] = lo[s2]  BY <5>1, <4>3
+          <5>. QED  BY <5>2, <5>3, <4>1
+        <4>. QED  BY <4>C1, <4>C2, <4>C3 DEF SortPermInv
+      <3>B. CASE table[idx(fp[self],index[self])] = expected[self]
+        \* Successful CAS: table'[idx] := fp[self].  The critical
+        \* open-addressing "no duplicate fingerprint insertion" claim
+        \* must hold here.  This is the same genuinely deep OMITTED
+        \* handled identically in `DupInvNext' (see doc-comment (a)).
+        \* Discharging it would require a separate protocol-level
+        \* invariant capturing fp-uniqueness in the probing sequence.
+        OMITTED
+      <3>. QED  BY <3>A, <3>B
+    <2>11. CASE tryEv(self)
+      \* pc[self] = "tryEv", pc'[self] \in {"waitIns", "put"}.
+      \* UNCHANGED <<table, ei, ej, lo>>.  Two sub-cases: evict = FALSE
+      \* (entering EvictUnion) and evict = TRUE (unsuccessful, pc' = "put").
+      <3>. USE <2>11 DEF tryEv
+      <3>1. pc[self] = "tryEv"  OBVIOUS
+      <3>2. UNCHANGED <<table, ei, ej, lo>>  OBVIOUS
+      <3>3. \A s2 \in ProcSet : s2 # self =>
+                /\ pc'[s2] = pc[s2]
+                /\ ej'[s2] = ej[s2]
+                /\ ei'[s2] = ei[s2]
+                /\ lo'[s2] = lo[s2]
+        OBVIOUS
+      <3>A. CASE evict = FALSE
+        \* pc'[self] = "waitIns" (in first trigger).  Need NoDupsTable'.
+        \* Pre: evict = FALSE, FindOrPut = TRUE (by DupInv), so
+        \* NoDupsTable (by DupInv second conjunct).
+        <4>. USE <3>A
+        <4>1. pc'[self] = "waitIns"  OBVIOUS
+        <4>2. FindOrPut  BY DEF FindOrPut
+        <4>3. NoDupsTable  BY <4>2
+        \* Other s2 at triggers pre-state: by EvictExclusive (evict =
+        \* FALSE gives no one in EvictUnion).
+        <4>4. \A s2 \in ProcSet :
+                pc[s2] \notin {"waitIns", "strIns", "flush",
+                                "nestedIns", "set"}
+          <5>. SUFFICES ASSUME NEW s2 \in ProcSet,
+                                pc[s2] \in {"waitIns", "strIns", "flush",
+                                             "nestedIns", "set"}
+                        PROVE  FALSE
+            OBVIOUS
+          <5>1. pc[s2] \in EvictUnion  OBVIOUS
+          <5>. QED  BY <5>1
+        <4>C1. \A s2 \in ProcSet :
+                  pc'[s2] \in {"waitIns", "strIns", "flush"}
+                    => NoDupsTable'
+          <5>. SUFFICES ASSUME NEW s2 \in ProcSet,
+                                pc'[s2] \in {"waitIns", "strIns", "flush"}
+                        PROVE  NoDupsTable'
+            OBVIOUS
+          <5>1. CASE s2 = self
+            BY <5>1, <4>3, <3>2
+          <5>2. CASE s2 # self
+            <6>1. pc'[s2] = pc[s2]  BY <5>2
+            <6>2. pc[s2] \in {"waitIns", "strIns", "flush"}  BY <6>1
+            <6>. QED  BY <6>2, <4>4
+          <5>. QED  BY <5>1, <5>2
+        <4>C2. \A s2 \in ProcSet :
+                  pc'[s2] = "strIns" => ej'[s2] = ei'[s2]
+          <5>. SUFFICES ASSUME NEW s2 \in ProcSet, pc'[s2] = "strIns"
+                        PROVE  ej'[s2] = ei'[s2]
+            OBVIOUS
+          <5>1. s2 # self  BY <4>1
+          <5>2. pc'[s2] = pc[s2]  BY <5>1
+          <5>3. pc[s2] = "strIns"  BY <5>2
+          <5>. QED  BY <5>3, <4>4
+        <4>C3. \A s2 \in ProcSet :
+                  pc'[s2] \in {"nestedIns", "set"} =>
+                    /\ mod(ej'[s2] + 1, K) \in 1..K
+                    /\ (lo'[s2] # empty =>
+                          \A j \in 1..K :
+                            j # mod(ej'[s2] + 1, K)
+                              /\ table'[j] # empty =>
+                              abs(table'[j]) # abs(lo'[s2]))
+                    /\ \A i, j \in 1..K :
+                         i # j /\ i # mod(ej'[s2] + 1, K)
+                               /\ j # mod(ej'[s2] + 1, K)
+                               /\ table'[i] # empty
+                               /\ table'[j] # empty =>
+                         abs(table'[i]) # abs(table'[j])
+          <5>. SUFFICES ASSUME NEW s2 \in ProcSet,
+                                pc'[s2] \in {"nestedIns", "set"}
+                        PROVE  FALSE
+            OBVIOUS
+          <5>1. s2 # self  BY <4>1
+          <5>2. pc'[s2] = pc[s2]  BY <5>1
+          <5>3. pc[s2] \in {"nestedIns", "set"}  BY <5>2
+          <5>. QED  BY <5>3, <4>4
+        <4>. QED  BY <4>C1, <4>C2, <4>C3 DEF SortPermInv
+      <3>B. CASE evict # FALSE
+        \* pc'[self] = "put" (not in any trigger).  evict unchanged.
+        \* Other s2 at triggers: preserved (by pre-state SortPermInv).
+        <4>. USE <3>B
+        <4>1. pc'[self] = "put"  OBVIOUS
+        <4>C1. \A s2 \in ProcSet :
+                  pc'[s2] \in {"waitIns", "strIns", "flush"}
+                    => NoDupsTable'
+          <5>. SUFFICES ASSUME NEW s2 \in ProcSet,
+                                pc'[s2] \in {"waitIns", "strIns", "flush"}
+                        PROVE  NoDupsTable'
+            OBVIOUS
+          <5>1. s2 # self  BY <4>1
+          <5>2. pc[s2] \in {"waitIns", "strIns", "flush"}  BY <5>1, <3>3
+          <5>. QED  BY <5>2, <3>2
+        <4>C2. \A s2 \in ProcSet :
+                  pc'[s2] = "strIns" => ej'[s2] = ei'[s2]
+          <5>. SUFFICES ASSUME NEW s2 \in ProcSet, pc'[s2] = "strIns"
+                        PROVE  ej'[s2] = ei'[s2]
+            OBVIOUS
+          <5>1. s2 # self  BY <4>1
+          <5>. QED  BY <5>1, <3>3
+        <4>C3. \A s2 \in ProcSet :
+                  pc'[s2] \in {"nestedIns", "set"} =>
+                    /\ mod(ej'[s2] + 1, K) \in 1..K
+                    /\ (lo'[s2] # empty =>
+                          \A j \in 1..K :
+                            j # mod(ej'[s2] + 1, K)
+                              /\ table'[j] # empty =>
+                              abs(table'[j]) # abs(lo'[s2]))
+                    /\ \A i, j \in 1..K :
+                         i # j /\ i # mod(ej'[s2] + 1, K)
+                               /\ j # mod(ej'[s2] + 1, K)
+                               /\ table'[i] # empty
+                               /\ table'[j] # empty =>
+                         abs(table'[i]) # abs(table'[j])
+          <5>. SUFFICES ASSUME NEW s2 \in ProcSet,
+                                pc'[s2] \in {"nestedIns", "set"}
+                        PROVE  /\ mod(ej'[s2] + 1, K) \in 1..K
+                               /\ (lo'[s2] # empty =>
+                                     \A j \in 1..K :
+                                       j # mod(ej'[s2] + 1, K)
+                                         /\ table'[j] # empty =>
+                                         abs(table'[j])
+                                           # abs(lo'[s2]))
+                               /\ \A i, j \in 1..K :
+                                    i # j
+                                      /\ i # mod(ej'[s2] + 1, K)
+                                      /\ j # mod(ej'[s2] + 1, K)
+                                      /\ table'[i] # empty
+                                      /\ table'[j] # empty =>
+                                    abs(table'[i]) # abs(table'[j])
+            OBVIOUS
+          <5>1. s2 # self  BY <4>1
+          <5>. QED  BY <5>1, <3>3, <3>2
+        <4>. QED  BY <4>C1, <4>C2, <4>C3 DEF SortPermInv
+      <3>. QED  BY <3>A, <3>B
+    <2>12. CASE waitIns(self)
+      \* pc[self] = "waitIns", pc'[self] = "strIns".
+      \* ei' := 1, ej' := 1, lo' := 0.  Table UNCHANGED.
+      \* Need NoDupsTable' and ej'[self] = ei'[self].
+      <3>. USE <2>12 DEF waitIns
+      <3>1. pc[self] = "waitIns"  OBVIOUS
+      <3>2. pc'[self] = "strIns"  OBVIOUS
+      <3>3. ei'[self] = 1 /\ ej'[self] = 1  OBVIOUS
+      <3>4. UNCHANGED table  OBVIOUS
+      <3>5. NoDupsTable  BY <3>1
+      \* Other writers are NOT in EvictUnion (self is unique by
+      \* EvictExclusive with pc[self] = "waitIns" in EvictUnion).
+      <3>6. \A s2 \in ProcSet : s2 # self =>
+                pc[s2] \notin {"waitIns", "strIns", "flush",
+                                "nestedIns", "set"}
+        <4>. SUFFICES ASSUME NEW s2 \in ProcSet, s2 # self,
+                              pc[s2] \in {"waitIns", "strIns", "flush",
+                                           "nestedIns", "set"}
+                      PROVE  FALSE
+          OBVIOUS
+        <4>1. pc[self] \in EvictUnion  BY <3>1
+        <4>2. pc[s2] \in EvictUnion  OBVIOUS
+        <4>. QED  BY <4>1, <4>2
+      <3>C1. \A s2 \in ProcSet :
+                pc'[s2] \in {"waitIns", "strIns", "flush"}
+                  => NoDupsTable'
+        <4>. SUFFICES ASSUME NEW s2 \in ProcSet,
+                              pc'[s2] \in {"waitIns", "strIns", "flush"}
+                      PROVE  NoDupsTable'
+          OBVIOUS
+        <4>1. CASE s2 = self
+          BY <4>1, <3>5, <3>4
+        <4>2. CASE s2 # self
+          <5>1. pc'[s2] = pc[s2]  BY <4>2
+          <5>2. pc[s2] \in {"waitIns", "strIns", "flush"}  BY <5>1
+          <5>. QED  BY <5>2, <3>6, <4>2, <3>4
+        <4>. QED  BY <4>1, <4>2
+      <3>C2. \A s2 \in ProcSet :
+                pc'[s2] = "strIns" => ej'[s2] = ei'[s2]
+        <4>. SUFFICES ASSUME NEW s2 \in ProcSet, pc'[s2] = "strIns"
+                      PROVE  ej'[s2] = ei'[s2]
+          OBVIOUS
+        <4>1. CASE s2 = self
+          BY <4>1, <3>3
+        <4>2. CASE s2 # self
+          <5>1. pc'[s2] = pc[s2]  BY <4>2
+          <5>2. pc[s2] = "strIns"  BY <5>1
+          <5>3. ej[s2] = ei[s2]  BY <5>2
+          <5>4. ej'[s2] = ej[s2] /\ ei'[s2] = ei[s2]  BY <4>2
+          <5>. QED  BY <5>3, <5>4
+        <4>. QED  BY <4>1, <4>2
+      <3>C3. \A s2 \in ProcSet :
+                pc'[s2] \in {"nestedIns", "set"} =>
+                  /\ mod(ej'[s2] + 1, K) \in 1..K
+                  /\ (lo'[s2] # empty =>
+                        \A j \in 1..K :
+                          j # mod(ej'[s2] + 1, K)
+                            /\ table'[j] # empty =>
+                            abs(table'[j]) # abs(lo'[s2]))
+                  /\ \A i, j \in 1..K :
+                       i # j /\ i # mod(ej'[s2] + 1, K)
+                             /\ j # mod(ej'[s2] + 1, K)
+                             /\ table'[i] # empty
+                             /\ table'[j] # empty =>
+                       abs(table'[i]) # abs(table'[j])
+        <4>. SUFFICES ASSUME NEW s2 \in ProcSet,
+                              pc'[s2] \in {"nestedIns", "set"}
+                      PROVE  FALSE
+          OBVIOUS
+        <4>1. s2 # self  BY <3>2
+        <4>2. pc'[s2] = pc[s2]  BY <4>1
+        <4>3. pc[s2] \in {"nestedIns", "set"}  BY <4>2
+        <4>. QED  BY <4>3, <3>6, <4>1
+      <3>. QED  BY <3>C1, <3>C2, <3>C3 DEF SortPermInv
+    <2>13. CASE endEv(self)
+      \* pc[self] = "endEv" (handled by DupInv), pc'[self] = "put".
+      \* UNCHANGED <<table, ei, ej, lo>>.  evict' = FALSE.
+      \* Other writers are NOT in EvictUnion (self is unique pre-state).
+      <3>. USE <2>13 DEF endEv
+      <3>1. pc[self] = "endEv"  OBVIOUS
+      <3>2. pc'[self] = "put"  OBVIOUS
+      <3>3. UNCHANGED <<table, ei, ej, lo>>  OBVIOUS
+      <3>4. \A s2 \in ProcSet : s2 # self =>
+                pc[s2] \notin {"waitIns", "strIns", "flush",
+                                "nestedIns", "set"}
+        <4>. SUFFICES ASSUME NEW s2 \in ProcSet, s2 # self,
+                              pc[s2] \in {"waitIns", "strIns", "flush",
+                                           "nestedIns", "set"}
+                      PROVE  FALSE
+          OBVIOUS
+        <4>1. pc[self] \in EvictUnion  BY <3>1
+        <4>2. pc[s2] \in EvictUnion  OBVIOUS
+        <4>. QED  BY <4>1, <4>2
+      <3>5. \A s2 \in ProcSet : s2 # self =>
+                /\ pc'[s2] = pc[s2]
+                /\ ej'[s2] = ej[s2]
+                /\ ei'[s2] = ei[s2]
+                /\ lo'[s2] = lo[s2]
+        OBVIOUS
+      <3>C1. \A s2 \in ProcSet :
+                pc'[s2] \in {"waitIns", "strIns", "flush"}
+                  => NoDupsTable'
+        <4>. SUFFICES ASSUME NEW s2 \in ProcSet,
+                              pc'[s2] \in {"waitIns", "strIns", "flush"}
+                      PROVE  NoDupsTable'
+          OBVIOUS
+        <4>1. s2 # self  BY <3>2
+        <4>2. pc[s2] \in {"waitIns", "strIns", "flush"}  BY <4>1, <3>5
+        <4>3. s2 \in ProcSet /\ pc[s2] \in {"waitIns", "strIns",
+                                              "flush", "nestedIns",
+                                              "set"}  BY <4>2
+        <4>. QED  BY <4>3, <3>4, <4>1
+      <3>C2. \A s2 \in ProcSet :
+                pc'[s2] = "strIns" => ej'[s2] = ei'[s2]
+        <4>. SUFFICES ASSUME NEW s2 \in ProcSet, pc'[s2] = "strIns"
+                      PROVE  ej'[s2] = ei'[s2]
+          OBVIOUS
+        <4>1. s2 # self  BY <3>2
+        <4>2. pc[s2] = "strIns"  BY <4>1, <3>5
+        <4>. QED  BY <4>2, <3>4, <4>1
+      <3>C3. \A s2 \in ProcSet :
+                pc'[s2] \in {"nestedIns", "set"} =>
+                  /\ mod(ej'[s2] + 1, K) \in 1..K
+                  /\ (lo'[s2] # empty =>
+                        \A j \in 1..K :
+                          j # mod(ej'[s2] + 1, K)
+                            /\ table'[j] # empty =>
+                            abs(table'[j]) # abs(lo'[s2]))
+                  /\ \A i, j \in 1..K :
+                       i # j /\ i # mod(ej'[s2] + 1, K)
+                             /\ j # mod(ej'[s2] + 1, K)
+                             /\ table'[i] # empty
+                             /\ table'[j] # empty =>
+                       abs(table'[i]) # abs(table'[j])
+        <4>. SUFFICES ASSUME NEW s2 \in ProcSet,
+                              pc'[s2] \in {"nestedIns", "set"}
+                      PROVE  FALSE
+          OBVIOUS
+        <4>1. s2 # self  BY <3>2
+        <4>2. pc[s2] \in {"nestedIns", "set"}  BY <4>1, <3>5
+        <4>. QED  BY <4>2, <3>4, <4>1
+      <3>. QED  BY <3>C1, <3>C2, <3>C3 DEF SortPermInv
+    <2>. QED  BY <2>1, <2>2, <2>3, <2>4, <2>5, <2>6, <2>7,
+                 <2>8, <2>9, <2>10, <2>11, <2>12, <2>13
+  <1>4. CASE Terminating
+    BY <1>4 DEF Terminating, vars
+  <1>. QED  BY <1>1, <1>2, <1>3, <1>4 DEF Next
+
+(***************************************************************************)
 (* Inductive step.                                                         *)
 (*                                                                         *)
 (* Most writer disjuncts leave `table' and `evict' UNCHANGED and move      *)
@@ -2571,17 +4181,15 @@ LEMMA LoTypeInd ==
 (* pc = "set" -- it would follow from a conditional `LoType' invariant     *)
 (* tracking `lo' through `strIns'.                                         *)
 (*                                                                         *)
-(* `flush' outer-else is MOSTLY DISCHARGED: TableType' (UNCHANGED table)   *)
-(* and FindOrPut' => NoDupsTable' (EvictExclusive forces evict = TRUE)     *)
-(* close; the residual OMITTED is the single fact `NoDupsTable' at pc     *)
-(* = "flush", which requires the sort-permutation / insertion-sort-body    *)
-(* invariant -- see (b)/(c).                                               *)
+(* `flush' outer-else is FULLY DISCHARGED by invoking `SortPermInv' (the   *)
+(* dedicated sort-permutation invariant defined above) to obtain           *)
+(* `NoDupsTable' directly at `pc[self] = "flush"'.                         *)
 (***************************************************************************)
 LEMMA DupInvNext == Inv /\ ResultType /\ EiType /\ EjType /\ LoType
-                    /\ EvictExclusive /\ DupInv
+                    /\ EvictExclusive /\ SortPermInv /\ DupInv
                     /\ [Next]_vars => DupInv'
   <1>. SUFFICES ASSUME Inv, ResultType, EiType, EjType, LoType,
-                       EvictExclusive, DupInv, [Next]_vars
+                       EvictExclusive, SortPermInv, DupInv, [Next]_vars
                 PROVE  DupInv'
     OBVIOUS
   <1>. USE DEF DupInv, TableType, NoDupsTable, FindOrPut, TableValues,
@@ -2867,10 +4475,12 @@ LEMMA DupInvNext == Inv /\ ResultType /\ EiType /\ EjType /\ LoType
         \* Need NoDupsTable at pre-state.  At s2 # self, pc'[s2] = pc[s2];
         \* if pc[s2] \in {"rtrn","endEv"}, by EvictExclusive mutex with
         \* self \in EvictUnion we get s2 = self, contradiction.  At
-        \* s2 = self, pc'[self] = "rtrn" triggers and we reduce to the
-        \* OMITTED sub-step `NoDupsTable at pc[self] = "flush"'.
-        <4>10. NoDupsTable  \* OMITTED sort-permutation invariant
-          OMITTED
+        \* s2 = self, pc'[self] = "rtrn" triggers, and the remaining
+        \* obligation `NoDupsTable at pc[self] = "flush"' follows from
+        \* the sort-permutation invariant `SortPermInv' (first conjunct
+        \* applied with pc[self] = "flush").
+        <4>10. NoDupsTable
+          BY <4>2 DEF SortPermInv
         <4>11. NoDupsTable'
           BY <4>1, <4>10
         <4>12. \A s2 \in ProcSet :
@@ -3445,16 +5055,21 @@ LEMMA DupInvImpliesDuplicates == DupInv => Duplicates
 (***************************************************************************)
 THEOREM DuplicatesSafety == Spec => []Duplicates
   <1>1. Spec => [](Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
-                   /\ LoType /\ WaitCntInv /\ EvictExclusive /\ DupInv)
+                   /\ LoType /\ WaitCntInv /\ EvictExclusive
+                   /\ SortPermInv /\ DupInv)
     <2>1. Init => Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
-                    /\ LoType /\ WaitCntInv /\ EvictExclusive /\ DupInv
+                    /\ LoType /\ WaitCntInv /\ EvictExclusive
+                    /\ SortPermInv /\ DupInv
       BY InitInv, InitStackOK, InitResultType, InitEiType, InitEjType,
-         InitLoType, InitWaitCntInv, InitEvictExclusive, InitDupInv
+         InitLoType, InitWaitCntInv, InitEvictExclusive,
+         InitSortPermInv, InitDupInv
     <2>2. (Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
-             /\ LoType /\ WaitCntInv /\ EvictExclusive /\ DupInv)
+             /\ LoType /\ WaitCntInv /\ EvictExclusive
+             /\ SortPermInv /\ DupInv)
              /\ [Next]_vars
             => (Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
-                  /\ LoType /\ WaitCntInv /\ EvictExclusive /\ DupInv)'
+                  /\ LoType /\ WaitCntInv /\ EvictExclusive
+                  /\ SortPermInv /\ DupInv)'
       <3>1. Inv /\ StackOK /\ [Next]_vars => Inv'
         BY InvNext
       <3>2. Inv /\ StackOK /\ [Next]_vars => StackOK'
@@ -3473,13 +5088,20 @@ THEOREM DuplicatesSafety == Spec => []Duplicates
       <3>8. Inv /\ StackOK /\ WaitCntInv /\ EvictExclusive /\ [Next]_vars
               => EvictExclusive'
         BY EvictExclusiveInd
-      <3>9. Inv /\ ResultType /\ EiType /\ EjType /\ LoType
-              /\ EvictExclusive /\ DupInv /\ [Next]_vars => DupInv'
+      <3>9. Inv /\ StackOK /\ ResultType /\ EiType /\ EjType /\ LoType
+              /\ DupInv /\ EvictExclusive /\ SortPermInv /\ [Next]_vars
+              => SortPermInv'
+        BY SortPermInd
+      <3>10. Inv /\ ResultType /\ EiType /\ EjType /\ LoType
+               /\ EvictExclusive /\ SortPermInv /\ DupInv /\ [Next]_vars
+               => DupInv'
         BY DupInvNext
-      <3>. QED  BY <3>1, <3>2, <3>3, <3>4, <3>5, <3>6, <3>7, <3>8, <3>9
+      <3>. QED  BY <3>1, <3>2, <3>3, <3>4, <3>5, <3>6, <3>7, <3>8,
+                    <3>9, <3>10
     <2>. QED  BY <2>1, <2>2, PTL DEF Spec
   <1>2. (Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
-           /\ LoType /\ WaitCntInv /\ EvictExclusive /\ DupInv)
+           /\ LoType /\ WaitCntInv /\ EvictExclusive
+           /\ SortPermInv /\ DupInv)
           => Duplicates
     BY DupInvImpliesDuplicates
   <1>. QED  BY <1>1, <1>2, PTL
@@ -4296,20 +5918,20 @@ THEOREM SortedSafety == Spec => []Sorted
   \* than the OMITTED that previously lived directly in `SortedInvNext'.
   <1>1. Spec => [](Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
                    /\ LoType /\ WaitCntInv /\ EvictExclusive
-                   /\ DupInv /\ SortedInv)
+                   /\ SortPermInv /\ DupInv /\ SortedInv)
     <2>1. Init => Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
                     /\ LoType /\ WaitCntInv /\ EvictExclusive
-                    /\ DupInv /\ SortedInv
+                    /\ SortPermInv /\ DupInv /\ SortedInv
       BY InitInv, InitStackOK, InitResultType, InitEiType, InitEjType,
-         InitLoType, InitWaitCntInv, InitEvictExclusive, InitDupInv,
-         InitSortedInv
+         InitLoType, InitWaitCntInv, InitEvictExclusive,
+         InitSortPermInv, InitDupInv, InitSortedInv
     <2>2. (Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
              /\ LoType /\ WaitCntInv /\ EvictExclusive
-             /\ DupInv /\ SortedInv)
+             /\ SortPermInv /\ DupInv /\ SortedInv)
             /\ [Next]_vars
           => (Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
                 /\ LoType /\ WaitCntInv /\ EvictExclusive
-                /\ DupInv /\ SortedInv)'
+                /\ SortPermInv /\ DupInv /\ SortedInv)'
       <3>1. Inv /\ StackOK /\ [Next]_vars => Inv'
         BY InvNext
       <3>2. Inv /\ StackOK /\ [Next]_vars => StackOK'
@@ -4328,13 +5950,18 @@ THEOREM SortedSafety == Spec => []Sorted
       <3>8. Inv /\ StackOK /\ WaitCntInv /\ EvictExclusive /\ [Next]_vars
               => EvictExclusive'
         BY EvictExclusiveInd
-      <3>9. Inv /\ ResultType /\ EiType /\ EjType /\ LoType
-              /\ EvictExclusive /\ DupInv /\ [Next]_vars => DupInv'
+      <3>9. Inv /\ StackOK /\ ResultType /\ EiType /\ EjType /\ LoType
+              /\ DupInv /\ EvictExclusive /\ SortPermInv /\ [Next]_vars
+              => SortPermInv'
+        BY SortPermInd
+      <3>10. Inv /\ ResultType /\ EiType /\ EjType /\ LoType
+               /\ EvictExclusive /\ SortPermInv /\ DupInv /\ [Next]_vars
+               => DupInv'
         BY DupInvNext
-      <3>10. EiType /\ DupInv /\ SortedInv /\ [Next]_vars => SortedInv'
+      <3>11. EiType /\ DupInv /\ SortedInv /\ [Next]_vars => SortedInv'
         BY SortedInvNext
       <3>. QED  BY <3>1, <3>2, <3>3, <3>4, <3>5, <3>6, <3>7, <3>8,
-                    <3>9, <3>10
+                    <3>9, <3>10, <3>11
     <2>. QED  BY <2>1, <2>2, PTL DEF Spec
   <1>2. SortedInv => Sorted
     BY SortedInvImpliesSorted
