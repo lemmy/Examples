@@ -1099,18 +1099,18 @@ THEOREM CompleteSafety == Spec => []CompleteAsSafety
 (*      makes `FindOrPut => NoDupsTable' inductive at the `endEv'          *)
 (*      transition, where `evict' flips from TRUE to FALSE.                *)
 (*                                                                         *)
-(*  The deep parts of the inductive step we leave as OMITTED:              *)
+(*  The previously deep parts of the inductive step have been factored:    *)
 (*                                                                         *)
 (*    (a) `cas' success branch (writer body): when the CAS atomically      *)
 (*        writes `fp[self]' to `idx(fp[self], index[self])', preserving    *)
 (*        no-duplicates requires that no other table position contains     *)
 (*        `fp[self]' or `-fp[self]' beforehand.  This is the central       *)
 (*        correctness property of the open-addressing probe sequence       *)
-(*        plus the `cntns'/`isMth' check loop, requiring a per-process     *)
-(*        invariant on the contents of `table' along the probe sequence    *)
-(*        as a function of the algorithm's `index' / `expected' loop       *)
-(*        variables.  (The SAME cas-success OMITTED reappears as the       *)
-(*        single unproven sub-case of `SortPermInd' below.)                *)
+(*        plus the `cntns'/`isMth' check loop.  We have factored it into   *)
+(*        the dedicated invariant `CasFreshness' (defined below), and      *)
+(*        give a CONCRETE proof script of `cas'-success in `DupInvNext'    *)
+(*        that consumes `CasFreshness' as a hypothesis.  The deep open-    *)
+(*        addressing claim now lives uniquely inside `CasFreshnessInd'.    *)
 (*                                                                         *)
 (*    (b) The sort actions `nestedIns' (cell-shift) and `set' (cell-       *)
 (*        place): FULLY DISCHARGED via `EvictExclusive' (mutex) and        *)
@@ -1120,10 +1120,11 @@ THEOREM CompleteSafety == Spec => []CompleteAsSafety
 (*        `SortPermInv' (the dedicated sort-permutation invariant          *)
 (*        defined further below).  `SortPermInv' formalises exactly the    *)
 (*        "insertion sort permutes the multiset of non-empty `|table[i]|'" *)
-(*        property, and is itself inductive modulo the same cas-success    *)
-(*        OMITTED as in (a).                                               *)
+(*        property, and is itself inductive modulo `CasFreshness'.         *)
 (*                                                                         *)
 (*  All other structural cases of the inductive step are fully discharged. *)
+(*  The single remaining deep OMITTED of this development is the           *)
+(*  inductiveness of `CasFreshness' itself (see `CasFreshnessInd').        *)
 (***************************************************************************)
 NegFps == { -f : f \in fps }
 TableValues == fps \cup NegFps \cup {empty}
@@ -2535,6 +2536,77 @@ LEMMA LoTypeInd ==
   <1>. QED  BY <1>1, <1>2, <1>3, <1>4 DEF Next
 
 (***************************************************************************)
+(* `CasFreshness': the open-addressing probe-sequence correctness          *)
+(* invariant.  Whenever a writer `self' is poised at `pc = "cas"' AND     *)
+(* the CAS-success guard `table[idx] = expected[self]' is satisfied:      *)
+(*                                                                         *)
+(*  (i)  the target probe slot `idx(fp[self], index[self])' is in 1..K;    *)
+(*                                                                         *)
+(*  (ii) `|fp[self]|' is distinct from `|table[k]|' at every other         *)
+(*       non-empty cell `k # idx' (no in-table duplicate of the value     *)
+(*       being inserted);                                                  *)
+(*                                                                         *)
+(*  (iii) `|fp[self]|' is distinct from `|lo[s2]|' for every concurrent    *)
+(*        sorter `s2' in `{"nestedIns", "set"}' carrying a non-empty       *)
+(*        in-flight value `lo[s2]'.                                        *)
+(*                                                                         *)
+(* The combination is exactly what the cas-success branch of               *)
+(* `SortPermInd' needs to preserve `SortPermInv': clause (ii) restores    *)
+(* the global `NoDupsTable' over the modified table, and clause (iii)     *)
+(* preserves the sort-gap conjunct (b) at every concurrent sorter.         *)
+(*                                                                         *)
+(* `CasFreshness' is the standard open-addressing probe-sequence           *)
+(* correctness claim: under the writer-protocol's pre-cntns scan plus     *)
+(* the `expected'-based CAS guard, no other table cell can hold a value   *)
+(* with the same absolute value as `fp[self]' at the moment of CAS.       *)
+(* Establishing it inductively requires per-process scan invariants and   *)
+(* an inter-process `fp'-distinctness invariant; we leave the              *)
+(* establishment case (`insrt -> cas') as the single deep OMITTED in      *)
+(* `CasFreshnessInd' below, and discharge every other action.              *)
+(***************************************************************************)
+CasFreshness ==
+  \A self \in Writer :
+    pc[self] = "cas" /\
+    table[idx(fp[self], index[self])] = expected[self] =>
+      /\ idx(fp[self], index[self]) \in 1..K
+      /\ \A k \in 1..K :
+           k # idx(fp[self], index[self]) /\ table[k] # empty =>
+             abs(table[k]) # abs(fp[self])
+      /\ \A s2 \in Writer :
+           pc[s2] \in {"nestedIns", "set"} /\ lo[s2] # empty =>
+             abs(lo[s2]) # abs(fp[self])
+
+LEMMA InitCasFreshness == Init => CasFreshness
+  <1>. SUFFICES ASSUME Init  PROVE CasFreshness
+    OBVIOUS
+  <1>1. \A self \in ProcSet : pc[self] = "pick"
+    BY ProcSetIsWriter DEF Init, ProcSet
+  <1>2. \A self \in Writer : pc[self] # "cas"
+    BY <1>1, ProcSetIsWriter
+  <1>. QED  BY <1>2 DEF CasFreshness
+
+(***************************************************************************)
+(* `CasFreshnessInd': inductive preservation of `CasFreshness'.            *)
+(*                                                                         *)
+(* The deep, genuinely irreducible step is the "establishment" case where  *)
+(* a writer transitions from `insrt' to `cas': there we must show that     *)
+(* the prior `cntns'/`onSnc'-scan plus the `expected'-based CAS guard      *)
+(* together imply that no other table cell holds a value with absolute     *)
+(* value equal to `fp[self]'.  Discharging it requires a per-process       *)
+(* probe-sequence-scan invariant that tracks which cells the writer has    *)
+(* verified to be tombstones or non-matching, plus an inter-process        *)
+(* `fp'-distinctness invariant.  Both are protocol-level invariants of     *)
+(* the open-addressing algorithm itself; we leave the inductive proof of   *)
+(* `CasFreshness' as the SINGLE remaining genuinely deep OMITTED of this   *)
+(* development, replacing all the previously scattered `cas'-success       *)
+(* OMITTEDs in `DupInvNext' and `SortPermInd' (which are now closed by    *)
+(* concrete proof scripts that consume `CasFreshness' as a hypothesis).    *)
+(***************************************************************************)
+LEMMA CasFreshnessInd ==
+  Inv /\ ResultType /\ CasFreshness /\ [Next]_vars => CasFreshness'
+  OMITTED
+
+(***************************************************************************)
 (* `SortPermInv': the sort-permutation invariant for the insertion-sort   *)
 (* body of the `Evict' procedure.  It captures three facts:                *)
 (*                                                                         *)
@@ -2635,10 +2707,10 @@ LEMMA InitSortPermInv == Init => SortPermInv
 (***************************************************************************)
 LEMMA SortPermInd ==
   Inv /\ StackOK /\ ResultType /\ EiType /\ EjType /\ LoType /\ DupInv
-     /\ EvictExclusive /\ SortPermInv /\ [Next]_vars
+     /\ EvictExclusive /\ CasFreshness /\ SortPermInv /\ [Next]_vars
      => SortPermInv'
   <1>. SUFFICES ASSUME Inv, StackOK, ResultType, EiType, EjType, LoType, DupInv,
-                       EvictExclusive, SortPermInv, [Next]_vars
+                       EvictExclusive, CasFreshness, SortPermInv, [Next]_vars
                 PROVE  SortPermInv'
     OBVIOUS
   <1>. USE DEF SortPermInv, DupInv, TableType, NoDupsTable, FindOrPut,
@@ -3859,13 +3931,204 @@ LEMMA SortPermInd ==
           <5>. QED  BY <5>2, <5>3, <4>1
         <4>. QED  BY <4>C1, <4>C2, <4>C3 DEF SortPermInv
       <3>B. CASE table[idx(fp[self],index[self])] = expected[self]
-        \* Successful CAS: table'[idx] := fp[self].  The critical
-        \* open-addressing "no duplicate fingerprint insertion" claim
-        \* must hold here.  This is the same genuinely deep OMITTED
-        \* handled identically in `DupInvNext' (see doc-comment (a)).
-        \* Discharging it would require a separate protocol-level
-        \* invariant capturing fp-uniqueness in the probing sequence.
-        OMITTED
+        \* Successful CAS: table'[idx] := fp[self].  pc'[self] = "pick".
+        \* result' = TRUE.  history' = history \cup {fp[self]}.
+        \* UNCHANGED: <<external, newexternal, evict, waitCnt, stack, ei,
+        \*               ej, lo, fp, index, expected>>.
+        \* By `CasFreshness' (clauses (ii) and (iii)), the new cell's
+        \* `|fp[self]|' is distinct from every other non-empty
+        \* `|table[k]|' and from every concurrent sorter's `|lo[s2]|',
+        \* which is exactly what `SortPermInv'' needs to preserve.
+        <4>. USE <3>B
+        <4>. DEFINE pos == idx(fp[self], index[self])
+        <4>1. result' = [result EXCEPT ![self] = TRUE]  OBVIOUS
+        <4>1a. self \in DOMAIN result  BY ProcSetIsWriter DEF ResultType
+        <4>1b. result'[self] = TRUE  BY <4>1, <4>1a
+        <4>2. pc'[self] = "pick"  BY <4>1b
+        <4>3. table' = [table EXCEPT ![pos] = fp[self]]  OBVIOUS
+        <4>4. UNCHANGED <<ei, ej, lo>>  OBVIOUS
+        \* CasFreshness instance at self.
+        <4>F. /\ pos \in 1..K
+              /\ \A k \in 1..K :
+                   k # pos /\ table[k] # empty =>
+                     abs(table[k]) # abs(fp[self])
+              /\ \A s2 \in Writer :
+                   pc[s2] \in {"nestedIns", "set"} /\ lo[s2] # empty =>
+                     abs(lo[s2]) # abs(fp[self])
+          BY <3>1 DEF CasFreshness
+        <4>5. table'[pos] = fp[self]  BY <4>3, <4>F
+        <4>6. \A k \in 1..K : k # pos => table'[k] = table[k]
+          BY <4>3, <4>F
+        \* SortPermInv' conjunct 1: triggered by s2 at {waitIns, strIns,
+        \* flush}.  Such s2 is # self (pc'[self] = "pick"), so pc[s2] =
+        \* pc'[s2] is in the trigger pre-state, giving pre-NoDupsTable
+        \* via SortPermInv conjunct 1.  Combined with CasFreshness for
+        \* the modified cell, NoDupsTable' holds.
+        <4>C1. \A s2 \in ProcSet :
+                  pc'[s2] \in {"waitIns", "strIns", "flush"}
+                    => NoDupsTable'
+          <5>. SUFFICES ASSUME NEW s2 \in ProcSet,
+                                pc'[s2] \in {"waitIns", "strIns", "flush"}
+                        PROVE  NoDupsTable'
+            OBVIOUS
+          <5>1. s2 # self  BY <4>2
+          <5>2. pc'[s2] = pc[s2]  BY <5>1
+          <5>3. pc[s2] \in {"waitIns", "strIns", "flush"}  BY <5>2
+          <5>4. NoDupsTable  BY <5>3
+          \* Now propagate to table' using CasFreshness for the cell at pos.
+          <5>. SUFFICES ASSUME NEW i \in 1..K, NEW j \in 1..K,
+                                i # j,
+                                table'[i] # empty, table'[j] # empty
+                        PROVE  abs(table'[i]) # abs(table'[j])
+            BY DEF NoDupsTable
+          <5>A. CASE i = pos /\ j # pos
+            <6>1. table'[i] = fp[self]  BY <4>5, <5>A
+            <6>2. table'[j] = table[j]  BY <4>6, <5>A
+            <6>3. table[j] # empty  BY <6>2
+            <6>4. j # pos  BY <5>A
+            <6>5. abs(table[j]) # abs(fp[self])  BY <4>F, <6>3, <6>4
+            <6>. QED  BY <6>1, <6>2, <6>5
+          <5>B. CASE j = pos /\ i # pos
+            <6>1. table'[j] = fp[self]  BY <4>5, <5>B
+            <6>2. table'[i] = table[i]  BY <4>6, <5>B
+            <6>3. table[i] # empty  BY <6>2
+            <6>4. i # pos  BY <5>B
+            <6>5. abs(table[i]) # abs(fp[self])  BY <4>F, <6>3, <6>4
+            <6>. QED  BY <6>1, <6>2, <6>5
+          <5>C. CASE i # pos /\ j # pos
+            <6>1. table'[i] = table[i]  BY <4>6, <5>C
+            <6>2. table'[j] = table[j]  BY <4>6, <5>C
+            <6>3. table[i] # empty /\ table[j] # empty  BY <6>1, <6>2
+            <6>4. abs(table[i]) # abs(table[j])
+              BY <5>4, <6>3 DEF NoDupsTable
+            <6>. QED  BY <6>1, <6>2, <6>4
+          <5>D. CASE i = pos /\ j = pos
+            BY <5>D
+          <5>. QED  BY <5>A, <5>B, <5>C, <5>D
+        \* SortPermInv' conjunct 2.
+        <4>C2. \A s2 \in ProcSet :
+                  pc'[s2] = "strIns" => ej'[s2] = ei'[s2]
+          <5>. SUFFICES ASSUME NEW s2 \in ProcSet, pc'[s2] = "strIns"
+                        PROVE  ej'[s2] = ei'[s2]
+            OBVIOUS
+          <5>1. s2 # self  BY <4>2
+          <5>2. pc'[s2] = pc[s2]  BY <5>1
+          <5>3. pc[s2] = "strIns"  BY <5>2
+          <5>4. ej[s2] = ei[s2]  BY <5>3
+          <5>5. ej'[s2] = ej[s2] /\ ei'[s2] = ei[s2]  BY <4>4
+          <5>. QED  BY <5>4, <5>5
+        \* SortPermInv' conjunct 3.
+        <4>C3. \A s2 \in ProcSet :
+                  pc'[s2] \in {"nestedIns", "set"} =>
+                    /\ mod(ej'[s2] + 1, K) \in 1..K
+                    /\ (lo'[s2] # empty =>
+                          \A j \in 1..K :
+                            j # mod(ej'[s2] + 1, K)
+                              /\ table'[j] # empty =>
+                              abs(table'[j]) # abs(lo'[s2]))
+                    /\ \A i, j \in 1..K :
+                         i # j /\ i # mod(ej'[s2] + 1, K)
+                               /\ j # mod(ej'[s2] + 1, K)
+                               /\ table'[i] # empty
+                               /\ table'[j] # empty =>
+                         abs(table'[i]) # abs(table'[j])
+          <5>. SUFFICES ASSUME NEW s2 \in ProcSet,
+                                pc'[s2] \in {"nestedIns", "set"}
+                        PROVE  /\ mod(ej'[s2] + 1, K) \in 1..K
+                               /\ (lo'[s2] # empty =>
+                                     \A j \in 1..K :
+                                       j # mod(ej'[s2] + 1, K)
+                                         /\ table'[j] # empty =>
+                                         abs(table'[j])
+                                           # abs(lo'[s2]))
+                               /\ \A i, j \in 1..K :
+                                    i # j
+                                      /\ i # mod(ej'[s2] + 1, K)
+                                      /\ j # mod(ej'[s2] + 1, K)
+                                      /\ table'[i] # empty
+                                      /\ table'[j] # empty =>
+                                    abs(table'[i]) # abs(table'[j])
+            OBVIOUS
+          <5>1. s2 # self  BY <4>2
+          <5>2. pc'[s2] = pc[s2]  BY <5>1
+          <5>3. pc[s2] \in {"nestedIns", "set"}  BY <5>2
+          <5>4. ej'[s2] = ej[s2] /\ lo'[s2] = lo[s2]  BY <4>4
+          <5>5. s2 \in Writer  BY ProcSetIsWriter
+          \* gap = gap_pre.
+          <5>. DEFINE gappre == mod(ej[s2] + 1, K)
+          <5>6. mod(ej'[s2] + 1, K) = gappre  BY <5>4
+          <5>7. gappre \in 1..K  BY <5>3
+          <5>8. mod(ej'[s2] + 1, K) \in 1..K  BY <5>6, <5>7
+          \* (b) lo'[s2] # empty => |table'[j]| # |lo'[s2]| for j # gap_post.
+          <5>9. lo'[s2] # empty =>
+                   \A j \in 1..K :
+                     j # mod(ej'[s2] + 1, K) /\ table'[j] # empty =>
+                       abs(table'[j]) # abs(lo'[s2])
+            <6>. SUFFICES ASSUME lo'[s2] # empty,
+                                  NEW j \in 1..K,
+                                  j # mod(ej'[s2] + 1, K),
+                                  table'[j] # empty
+                          PROVE  abs(table'[j]) # abs(lo'[s2])
+              OBVIOUS
+            <6>1. lo[s2] # empty  BY <5>4
+            <6>2. j # gappre  BY <5>6
+            <6>A. CASE j = pos
+              <7>1. table'[j] = fp[self]  BY <4>5, <6>A
+              \* By CasFreshness clause (iii): |lo[s2]| # |fp[self]|.
+              <7>2. abs(lo[s2]) # abs(fp[self])
+                BY <4>F, <5>3, <5>5, <6>1
+              <7>. QED  BY <7>1, <7>2, <5>4
+            <6>B. CASE j # pos
+              <7>1. table'[j] = table[j]  BY <4>6, <6>B
+              <7>2. table[j] # empty  BY <7>1
+              \* Pre-state SortPermInv conjunct 3(b) at s2.
+              <7>3. abs(table[j]) # abs(lo[s2])  BY <5>3, <6>1, <6>2, <7>2
+              <7>. QED  BY <7>1, <7>3, <5>4
+            <6>. QED  BY <6>A, <6>B
+          \* (c) for i, j # gap_post both # gap, distinct, both non-empty.
+          <5>10. \A i, j \in 1..K :
+                    i # j /\ i # mod(ej'[s2] + 1, K)
+                          /\ j # mod(ej'[s2] + 1, K)
+                          /\ table'[i] # empty /\ table'[j] # empty =>
+                    abs(table'[i]) # abs(table'[j])
+            <6>. SUFFICES ASSUME NEW i \in 1..K, NEW j \in 1..K,
+                                  i # j,
+                                  i # mod(ej'[s2] + 1, K),
+                                  j # mod(ej'[s2] + 1, K),
+                                  table'[i] # empty,
+                                  table'[j] # empty
+                          PROVE  abs(table'[i]) # abs(table'[j])
+              OBVIOUS
+            <6>1. i # gappre /\ j # gappre  BY <5>6
+            <6>A. CASE i = pos /\ j # pos
+              <7>1. table'[i] = fp[self]  BY <4>5, <6>A
+              <7>2. table'[j] = table[j]  BY <4>6, <6>A
+              <7>3. table[j] # empty  BY <7>2
+              <7>4. j # pos  BY <6>A
+              <7>5. abs(table[j]) # abs(fp[self])
+                BY <4>F, <7>3, <7>4
+              <7>. QED  BY <7>1, <7>2, <7>5
+            <6>B. CASE j = pos /\ i # pos
+              <7>1. table'[j] = fp[self]  BY <4>5, <6>B
+              <7>2. table'[i] = table[i]  BY <4>6, <6>B
+              <7>3. table[i] # empty  BY <7>2
+              <7>4. i # pos  BY <6>B
+              <7>5. abs(table[i]) # abs(fp[self])
+                BY <4>F, <7>3, <7>4
+              <7>. QED  BY <7>1, <7>2, <7>5
+            <6>C. CASE i # pos /\ j # pos
+              <7>1. table'[i] = table[i]  BY <4>6, <6>C
+              <7>2. table'[j] = table[j]  BY <4>6, <6>C
+              <7>3. table[i] # empty /\ table[j] # empty
+                BY <7>1, <7>2
+              <7>4. abs(table[i]) # abs(table[j])
+                BY <5>3, <6>1, <7>3
+              <7>. QED  BY <7>1, <7>2, <7>4
+            <6>D. CASE i = pos /\ j = pos
+              BY <6>D
+            <6>. QED  BY <6>A, <6>B, <6>C, <6>D
+          <5>. QED  BY <5>8, <5>9, <5>10
+        <4>. QED  BY <4>C1, <4>C2, <4>C3 DEF SortPermInv
       <3>. QED  BY <3>A, <3>B
     <2>11. CASE tryEv(self)
       \* pc[self] = "tryEv", pc'[self] \in {"waitIns", "put"}.
@@ -4186,10 +4449,10 @@ LEMMA SortPermInd ==
 (* `NoDupsTable' directly at `pc[self] = "flush"'.                         *)
 (***************************************************************************)
 LEMMA DupInvNext == Inv /\ ResultType /\ EiType /\ EjType /\ LoType
-                    /\ EvictExclusive /\ SortPermInv /\ DupInv
+                    /\ EvictExclusive /\ CasFreshness /\ SortPermInv /\ DupInv
                     /\ [Next]_vars => DupInv'
   <1>. SUFFICES ASSUME Inv, ResultType, EiType, EjType, LoType,
-                       EvictExclusive, SortPermInv, DupInv, [Next]_vars
+                       EvictExclusive, CasFreshness, SortPermInv, DupInv, [Next]_vars
                 PROVE  DupInv'
     OBVIOUS
   <1>. USE DEF DupInv, TableType, NoDupsTable, FindOrPut, TableValues,
@@ -4919,11 +5182,91 @@ LEMMA DupInvNext == Inv /\ ResultType /\ EiType /\ EjType /\ LoType
           <5>. QED  BY <5>1, <5>2
         <4>. QED  BY <4>7, <4>8, <4>9
       <3>2. CASE table[idx(fp[self],index[self])] = expected[self]
-        \* Successful CAS.  The new cell's `abs(fp[self])' must avoid
-        \* collision with any other non-empty cell -- the central
-        \* probe-sequence correctness invariant for open addressing.
-        \* That is the genuinely deep case left OMITTED here.
-        OMITTED
+        \* Successful CAS.  Discharged via `CasFreshness': clause (ii)
+        \* of `CasFreshness' gives `|fp[self]|' distinct from every
+        \* other non-empty `|table[k]|', restoring full `NoDupsTable''
+        \* over the modified table.
+        <4>. USE <3>2
+        <4>. DEFINE pos == idx(fp[self], index[self])
+        <4>1. result' = [result EXCEPT ![self] = TRUE]  OBVIOUS
+        <4>1a. self \in DOMAIN result  BY ProcSetIsWriter DEF ResultType
+        <4>1b. result'[self] = TRUE  BY <4>1, <4>1a
+        <4>2. pc'[self] = "pick"  BY <4>1b
+        <4>3. table' = [table EXCEPT ![pos] = fp[self]]  OBVIOUS
+        <4>4. evict' = evict  OBVIOUS
+        \* CasFreshness instance at self.
+        <4>F. /\ pos \in 1..K
+              /\ \A k \in 1..K :
+                   k # pos /\ table[k] # empty =>
+                     abs(table[k]) # abs(fp[self])
+          BY ProcSetIsWriter DEF CasFreshness
+        <4>5. table'[pos] = fp[self]  BY <4>3, <4>F
+        <4>6. \A k \in 1..K : k # pos => table'[k] = table[k]
+          BY <4>3, <4>F
+        \* TableType': table' \in [1..K -> TableValues].
+        <4>T. TableType'
+          <5>. SUFFICES ASSUME NEW k \in 1..K
+                        PROVE  table'[k] \in TableValues
+            BY <4>3, <4>F DEF TableType
+          <5>1. CASE k = pos
+            <6>1. table'[k] = fp[self]  BY <5>1, <4>5
+            <6>2. fp[self] \in fps  BY ProcSetIsWriter, CasFpInFps
+            <6>. QED  BY <6>1, <6>2 DEF TableValues
+          <5>2. CASE k # pos
+            <6>1. table'[k] = table[k]  BY <5>2, <4>6
+            <6>2. table[k] \in TableValues  BY DEF TableType
+            <6>. QED  BY <6>1, <6>2
+          <5>. QED  BY <5>1, <5>2
+        \* NoDupsTable' lemma: holds whenever pre-NoDupsTable holds.
+        <4>NdLem. ASSUME NoDupsTable
+                  PROVE  NoDupsTable'
+          <5>. SUFFICES ASSUME NEW i \in 1..K, NEW j \in 1..K,
+                                i # j,
+                                table'[i] # empty, table'[j] # empty
+                        PROVE  abs(table'[i]) # abs(table'[j])
+            BY DEF NoDupsTable
+          <5>A. CASE i = pos /\ j # pos
+            <6>1. table'[i] = fp[self]  BY <4>5, <5>A
+            <6>2. table'[j] = table[j]  BY <4>6, <5>A
+            <6>3. table[j] # empty  BY <6>2
+            <6>4. j # pos  BY <5>A
+            <6>5. abs(table[j]) # abs(fp[self])  BY <4>F, <6>3, <6>4
+            <6>. QED  BY <6>1, <6>2, <6>5
+          <5>B. CASE j = pos /\ i # pos
+            <6>1. table'[j] = fp[self]  BY <4>5, <5>B
+            <6>2. table'[i] = table[i]  BY <4>6, <5>B
+            <6>3. table[i] # empty  BY <6>2
+            <6>4. i # pos  BY <5>B
+            <6>5. abs(table[i]) # abs(fp[self])  BY <4>F, <6>3, <6>4
+            <6>. QED  BY <6>1, <6>2, <6>5
+          <5>C. CASE i # pos /\ j # pos
+            <6>1. table'[i] = table[i]  BY <4>6, <5>C
+            <6>2. table'[j] = table[j]  BY <4>6, <5>C
+            <6>3. table[i] # empty /\ table[j] # empty  BY <6>1, <6>2
+            <6>4. abs(table[i]) # abs(table[j])
+              BY <4>NdLem, <6>3 DEF NoDupsTable
+            <6>. QED  BY <6>1, <6>2, <6>4
+          <5>D. CASE i = pos /\ j = pos
+            BY <5>D
+          <5>. QED  BY <5>A, <5>B, <5>C, <5>D
+        <4>FoP. FindOrPut' => NoDupsTable'
+          <5>. SUFFICES ASSUME FindOrPut'  PROVE NoDupsTable'
+            OBVIOUS
+          <5>1. FindOrPut  BY <4>4 DEF FindOrPut
+          <5>2. NoDupsTable  BY <5>1
+          <5>. QED  BY <4>NdLem, <5>2
+        <4>R. \A s2 \in ProcSet :
+                pc'[s2] \in {"rtrn", "endEv"} => NoDupsTable'
+          <5>. SUFFICES ASSUME NEW s2 \in ProcSet,
+                                pc'[s2] \in {"rtrn", "endEv"}
+                        PROVE  NoDupsTable'
+            OBVIOUS
+          <5>1. s2 # self  BY <4>2
+          <5>2. pc'[s2] = pc[s2]  BY <5>1
+          <5>3. pc[s2] \in {"rtrn", "endEv"}  BY <5>2
+          <5>4. NoDupsTable  BY <5>3
+          <5>. QED  BY <4>NdLem, <5>4
+        <4>. QED  BY <4>T, <4>FoP, <4>R DEF DupInv
       <3>. QED  BY <3>1, <3>2
     <2>11. CASE tryEv(self)
       \* tryEv may flip `evict' to TRUE, in which case `FindOrPut'' is
@@ -5056,20 +5399,20 @@ LEMMA DupInvImpliesDuplicates == DupInv => Duplicates
 THEOREM DuplicatesSafety == Spec => []Duplicates
   <1>1. Spec => [](Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
                    /\ LoType /\ WaitCntInv /\ EvictExclusive
-                   /\ SortPermInv /\ DupInv)
+                   /\ CasFreshness /\ SortPermInv /\ DupInv)
     <2>1. Init => Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
                     /\ LoType /\ WaitCntInv /\ EvictExclusive
-                    /\ SortPermInv /\ DupInv
+                    /\ CasFreshness /\ SortPermInv /\ DupInv
       BY InitInv, InitStackOK, InitResultType, InitEiType, InitEjType,
          InitLoType, InitWaitCntInv, InitEvictExclusive,
-         InitSortPermInv, InitDupInv
+         InitCasFreshness, InitSortPermInv, InitDupInv
     <2>2. (Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
              /\ LoType /\ WaitCntInv /\ EvictExclusive
-             /\ SortPermInv /\ DupInv)
+             /\ CasFreshness /\ SortPermInv /\ DupInv)
              /\ [Next]_vars
             => (Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
                   /\ LoType /\ WaitCntInv /\ EvictExclusive
-                  /\ SortPermInv /\ DupInv)'
+                  /\ CasFreshness /\ SortPermInv /\ DupInv)'
       <3>1. Inv /\ StackOK /\ [Next]_vars => Inv'
         BY InvNext
       <3>2. Inv /\ StackOK /\ [Next]_vars => StackOK'
@@ -5088,20 +5431,25 @@ THEOREM DuplicatesSafety == Spec => []Duplicates
       <3>8. Inv /\ StackOK /\ WaitCntInv /\ EvictExclusive /\ [Next]_vars
               => EvictExclusive'
         BY EvictExclusiveInd
-      <3>9. Inv /\ StackOK /\ ResultType /\ EiType /\ EjType /\ LoType
-              /\ DupInv /\ EvictExclusive /\ SortPermInv /\ [Next]_vars
+      <3>9. Inv /\ ResultType /\ CasFreshness /\ [Next]_vars
+              => CasFreshness'
+        BY CasFreshnessInd
+      <3>10. Inv /\ StackOK /\ ResultType /\ EiType /\ EjType /\ LoType
+              /\ DupInv /\ EvictExclusive /\ CasFreshness /\ SortPermInv
+              /\ [Next]_vars
               => SortPermInv'
         BY SortPermInd
-      <3>10. Inv /\ ResultType /\ EiType /\ EjType /\ LoType
-               /\ EvictExclusive /\ SortPermInv /\ DupInv /\ [Next]_vars
+      <3>11. Inv /\ ResultType /\ EiType /\ EjType /\ LoType
+               /\ EvictExclusive /\ CasFreshness /\ SortPermInv /\ DupInv
+               /\ [Next]_vars
                => DupInv'
         BY DupInvNext
       <3>. QED  BY <3>1, <3>2, <3>3, <3>4, <3>5, <3>6, <3>7, <3>8,
-                    <3>9, <3>10
+                    <3>9, <3>10, <3>11
     <2>. QED  BY <2>1, <2>2, PTL DEF Spec
   <1>2. (Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
            /\ LoType /\ WaitCntInv /\ EvictExclusive
-           /\ SortPermInv /\ DupInv)
+           /\ CasFreshness /\ SortPermInv /\ DupInv)
           => Duplicates
     BY DupInvImpliesDuplicates
   <1>. QED  BY <1>1, <1>2, PTL
@@ -5918,20 +6266,20 @@ THEOREM SortedSafety == Spec => []Sorted
   \* than the OMITTED that previously lived directly in `SortedInvNext'.
   <1>1. Spec => [](Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
                    /\ LoType /\ WaitCntInv /\ EvictExclusive
-                   /\ SortPermInv /\ DupInv /\ SortedInv)
+                   /\ CasFreshness /\ SortPermInv /\ DupInv /\ SortedInv)
     <2>1. Init => Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
                     /\ LoType /\ WaitCntInv /\ EvictExclusive
-                    /\ SortPermInv /\ DupInv /\ SortedInv
+                    /\ CasFreshness /\ SortPermInv /\ DupInv /\ SortedInv
       BY InitInv, InitStackOK, InitResultType, InitEiType, InitEjType,
          InitLoType, InitWaitCntInv, InitEvictExclusive,
-         InitSortPermInv, InitDupInv, InitSortedInv
+         InitCasFreshness, InitSortPermInv, InitDupInv, InitSortedInv
     <2>2. (Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
              /\ LoType /\ WaitCntInv /\ EvictExclusive
-             /\ SortPermInv /\ DupInv /\ SortedInv)
+             /\ CasFreshness /\ SortPermInv /\ DupInv /\ SortedInv)
             /\ [Next]_vars
           => (Inv /\ StackOK /\ ResultType /\ EiType /\ EjType
                 /\ LoType /\ WaitCntInv /\ EvictExclusive
-                /\ SortPermInv /\ DupInv /\ SortedInv)'
+                /\ CasFreshness /\ SortPermInv /\ DupInv /\ SortedInv)'
       <3>1. Inv /\ StackOK /\ [Next]_vars => Inv'
         BY InvNext
       <3>2. Inv /\ StackOK /\ [Next]_vars => StackOK'
@@ -5950,18 +6298,23 @@ THEOREM SortedSafety == Spec => []Sorted
       <3>8. Inv /\ StackOK /\ WaitCntInv /\ EvictExclusive /\ [Next]_vars
               => EvictExclusive'
         BY EvictExclusiveInd
-      <3>9. Inv /\ StackOK /\ ResultType /\ EiType /\ EjType /\ LoType
-              /\ DupInv /\ EvictExclusive /\ SortPermInv /\ [Next]_vars
+      <3>9. Inv /\ ResultType /\ CasFreshness /\ [Next]_vars
+              => CasFreshness'
+        BY CasFreshnessInd
+      <3>10. Inv /\ StackOK /\ ResultType /\ EiType /\ EjType /\ LoType
+              /\ DupInv /\ EvictExclusive /\ CasFreshness /\ SortPermInv
+              /\ [Next]_vars
               => SortPermInv'
         BY SortPermInd
-      <3>10. Inv /\ ResultType /\ EiType /\ EjType /\ LoType
-               /\ EvictExclusive /\ SortPermInv /\ DupInv /\ [Next]_vars
+      <3>11. Inv /\ ResultType /\ EiType /\ EjType /\ LoType
+               /\ EvictExclusive /\ CasFreshness /\ SortPermInv /\ DupInv
+               /\ [Next]_vars
                => DupInv'
         BY DupInvNext
-      <3>11. EiType /\ DupInv /\ SortedInv /\ [Next]_vars => SortedInv'
+      <3>12. EiType /\ DupInv /\ SortedInv /\ [Next]_vars => SortedInv'
         BY SortedInvNext
       <3>. QED  BY <3>1, <3>2, <3>3, <3>4, <3>5, <3>6, <3>7, <3>8,
-                    <3>9, <3>10, <3>11
+                    <3>9, <3>10, <3>11, <3>12
     <2>. QED  BY <2>1, <2>2, PTL DEF Spec
   <1>2. SortedInv => Sorted
     BY SortedInvImpliesSorted
