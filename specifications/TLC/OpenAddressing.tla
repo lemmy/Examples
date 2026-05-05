@@ -46,6 +46,7 @@ ASSUME OAAssumption ==
 (***************************************************************************)
 (* The image of the function F.                                            *)
 (***************************************************************************)
+\* @type: (Str -> Int) => Set(Int);
 Image(F) == { F[x] : x \in DOMAIN F }
 
 (***************************************************************************)
@@ -76,7 +77,8 @@ subSeqLarger(seq1, seq2) == IF seq2 = <<>>
 (***************************************************************************)
 (* TRUE iff the sequence seq contains the element elem.                    *)
 (***************************************************************************)
-containsElem(seq, elem) == elem \in Image(seq)
+\* @type: (Seq(Int), Int) => Bool;
+containsElem(seq, elem) == \E i \in 1..Len(seq): seq[i] = elem
                     
 (***************************************************************************)
 (* The minimum and maximum element in set S.                               *)
@@ -132,18 +134,21 @@ idx(fp, p) == rescale(K, max(fps), min(fps), fp, p)
 (* TRUE iff the fingerprint at table position index is equal to fp or its  *)
 (* corresponding negative fp value (marked as to be copied to external).   *)
 (***************************************************************************)
-isMatch(fp, index, table) == \/ table[index] = fp
-                             \/ table[index] = (-1*fp)
+\* @type: (Int, Int, Int -> Int) => Bool;
+isMatch(fp, pos, tab) == \/ tab[pos] = fp
+                             \/ tab[pos] = (-1*fp)
 
 (***************************************************************************)
 (* TRUE iff the table at position index is empty.                          *)
 (***************************************************************************)
-isEmpty(index, table) == table[index] = empty
+\* @type: (Int, Int -> Int) => Bool;
+isEmpty(pos, tab) == tab[pos] = empty
 
 (***************************************************************************)
 (* TRUE iff the table at position index is marked evicted.                 *)
 (***************************************************************************)
-isMarked(index, table) == table[index] < 0
+\* @type: (Int, Int -> Int) => Bool;
+isMarked(pos, tab) == tab[pos] < 0
 
 ----------------------------------------------------------------------------
 
