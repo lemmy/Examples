@@ -16,7 +16,19 @@ EXTENDS Sequences, FiniteSets, Integers
 (* The set of processes which check fingerprints with contains. L: The     *)
 (* probing limit.                                                          *)
 (***************************************************************************)
-CONSTANT K, fps, empty, Writer, Reader, L
+CONSTANT
+    \* @type: Int;
+    K,
+    \* @type: Set(Int);
+    fps,
+    \* @type: Int;
+    empty,
+    \* @type: Set(Str);
+    Writer,
+    \* @type: Set(Str);
+    Reader,
+    \* @type: Int;
+    L
 
 (***************************************************************************)
 (* K is a positive natural.  emtpy is different from all elements in fps.  *)
@@ -480,8 +492,38 @@ compare(fp1,i1,fp2,i2) ==
 }
 ***     this ends the comment containg the pluscal code      **********)
 \* BEGIN TRANSLATION (chksum(pcal) = "b4d45dd9" /\ chksum(tla) = "7e9e5338")
-VARIABLES table, external, newexternal, evict, waitCnt, history, pc, stack, 
-          ei, ej, lo, fp, index, result, expected
+\* Apalache Snowcat types (Str = model value strings, e.g. process ids).
+VARIABLES
+    \* @type: Int -> Int;
+    table,
+    \* @type: Seq(Int);
+    external,
+    \* @type: Seq(Int);
+    newexternal,
+    \* @type: Bool;
+    evict,
+    \* @type: Int;
+    waitCnt,
+    \* @type: Set(Int);
+    history,
+    \* @type: Str -> Str;
+    pc,
+    \* @type: Str -> Seq({ procedure: Str, pc: Str, ei: Int, ej: Int, lo: Int });
+    stack,
+    \* @type: Str -> Int;
+    ei,
+    \* @type: Str -> Int;
+    ej,
+    \* @type: Str -> Int;
+    lo,
+    \* @type: Str -> Int;
+    fp,
+    \* @type: Str -> Int;
+    index,
+    \* @type: Str -> Bool;
+    result,
+    \* @type: Str -> Int;
+    expected
 
 vars == << table, external, newexternal, evict, waitCnt, history, pc, stack, 
            ei, ej, lo, fp, index, result, expected >>
