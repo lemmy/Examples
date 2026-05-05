@@ -823,11 +823,8 @@ FindOrPut == evict = FALSE
 (* non-atomically s.t. the table contains duplicates of one of the two     *)
 (* fingerprints temporarily.                                               *)
 (***************************************************************************)
-Duplicates == FindOrPut => LET sub == SelectSeq(table, LAMBDA e: e # empty)
-                           IN IF Len(sub) < 2 THEN TRUE
-                              ELSE \A i \in 1..(Len(sub) - 1):
-                                      \A j \in (i+1)..Len(sub):
-                                         abs(sub[i]) # abs(sub[j])
+Duplicates == FindOrPut => \A i \in 1..K : \A j \in (i+1)..K :
+                 (table[i] # empty /\ table[j] # empty) => abs(table[i]) # abs(table[j])
 
 ----------------------------------------------------------------------------
 
