@@ -2555,52 +2555,33 @@ LEMMA LoTypeInd ==
 (* the global `NoDupsTable' over the modified table, and clause (iii)     *)
 (* preserves the sort-gap conjunct (b) at every concurrent sorter.         *)
 (*                                                                         *)
-(* `CasFreshness' is the standard open-addressing probe-sequence           *)
-(* correctness claim: under the writer-protocol's pre-cntns scan plus     *)
-(* the `expected'-based CAS guard, no other table cell can hold a value   *)
-(* with the same absolute value as `fp[self]' at the moment of CAS.       *)
-(* Establishing it inductively requires per-process scan invariants and   *)
-(* an inter-process `fp'-distinctness invariant; we leave the              *)
-(* establishment case (`insrt -> cas') as the single deep OMITTED in      *)
-(* `CasFreshnessInd' below, and discharge every other action.              *)
+(* `CasFreshness' ties together `CasProbeUniqueAbsFp' (no off-probe copy of  *)
+(* `|fp|' while inserting) and `CasFreshnessCore' (the conditional CAS     *)
+(* obligations).  The probe predicate is the genuine strengthening; the    *)
+(* core is the earlier (i)-(iii) structure.  Inductive preservation of the  *)
+(* combination is still concentrated in `CasFreshnessInd' (establishment    *)
+(* `insrt -> cas' is the hard case in TLAPS).                              *)
 (***************************************************************************)
-CasFreshness ==
-  \A self \in Writer :
-    pc[self] = "cas" /\
-    table[idx(fp[self], index[self])] = expected[self] =>
-      /\ idx(fp[self], index[self]) \in 1..K
-      /\ \A k \in 1..K :
-           k # idx(fp[self], index[self]) /\ table[k] # empty =>
-             abs(table[k]) # abs(fp[self])
-      /\ \A s2 \in Writer :
-           pc[s2] \in {"nestedIns", "set"} /\ lo[s2] # empty =>
-             abs(lo[s2]) # abs(fp[self])
+CasFreshness == CasProbeUniqueAbsFp /\ CasFreshnessCore
 
 LEMMA InitCasFreshness == Init => CasFreshness
   <1>. SUFFICES ASSUME Init  PROVE CasFreshness
     OBVIOUS
   <1>1. \A self \in ProcSet : pc[self] = "pick"
     BY ProcSetIsWriter DEF Init, ProcSet
-  <1>2. \A self \in Writer : pc[self] # "cas"
+  <1>2. \A self \in Writer : pc[self] \notin {"insrt", "cas"}
     BY <1>1, ProcSetIsWriter
-  <1>. QED  BY <1>2 DEF CasFreshness
+  <1>. QED  BY <1>2 DEF CasFreshness, CasProbeUniqueAbsFp, CasFreshnessCore
 
 (***************************************************************************)
 (* `CasFreshnessInd': inductive preservation of `CasFreshness'.            *)
 (*                                                                         *)
-(* The deep, genuinely irreducible step is the "establishment" case where  *)
-(* a writer transitions from `insrt' to `cas': there we must show that     *)
-(* the prior `cntns'/`onSnc'-scan plus the `expected'-based CAS guard      *)
-(* together imply that no other table cell holds a value with absolute     *)
-(* value equal to `fp[self]'.  Discharging it requires a per-process       *)
-(* probe-sequence-scan invariant that tracks which cells the writer has    *)
-(* verified to be tombstones or non-matching, plus an inter-process        *)
-(* `fp'-distinctness invariant.  Both are protocol-level invariants of     *)
-(* the open-addressing algorithm itself; we leave the inductive proof of   *)
-(* `CasFreshness' as the SINGLE remaining genuinely deep OMITTED of this   *)
-(* development, replacing all the previously scattered `cas'-success       *)
-(* OMITTEDs in `DupInvNext' and `SortPermInd' (which are now closed by    *)
-(* concrete proof scripts that consume `CasFreshness' as a hypothesis).    *)
+(* `CasProbeUniqueAbsFp' is exactly the probe hygiene Apalache needs and   *)
+(* TLAPS must show preserved when entering `cas' (esp. `insrt' ->           *)
+(* `cas').  `CasFreshnessCore' is the conditional (i)-(iii) CAS clause.    *)
+(* Discharging both together still hinges on the same deep establishment   *)
+(* step from cntns/onSnc + probe walks; we leave it as OMITTED pending     *)
+(* a TLAPS proof that bridges the scan into `CasProbeUniqueAbsFp'.         *)
 (***************************************************************************)
 LEMMA CasFreshnessInd ==
   Inv /\ ResultType /\ CasFreshness /\ [Next]_vars => CasFreshness'

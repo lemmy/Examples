@@ -768,6 +768,44 @@ Contains == /\ \A seen \in history:
 (* The absolute value of the given number.                                 *)
 (***************************************************************************)
 abs(number) == IF number < 0 THEN -1 * number ELSE number
+
+(***************************************************************************)
+(* While a writer is at `insrt' or `cas', at most one table position may   *)
+(* already hold the same absolute fingerprint as `fp[self]': the current  *)
+(* probe cell `idx(fp[self], index[self])'.                                *)
+(*                                                                         *)
+(* Without this, `cas' can be reached with `|fp|' already stored in a     *)
+(* different cell that was never examined on the current probe prefix     *)
+(* (see `CasFreshnessCex.tla').  Intended to follow from the `cntns'/     *)
+(* `onSnc' scan before insertion in TLAPS; Apalache checks it on small    *)
+(* instances via `APCasInd.tla'.                                          *)
+(***************************************************************************)
+CasProbeUniqueAbsFp ==
+  \A self \in Writer :
+    pc[self] \in {"insrt", "cas"} =>
+      \A k \in 1..K :
+        /\ table[k] # empty
+        /\ abs(table[k]) = abs(fp[self])
+        => k = idx(fp[self], index[self])
+
+(***************************************************************************)
+(* When the CAS guard holds at `cas', clauses (i)-(iii) are the usual    *)
+(* probe-slot well-formedness, no duplicate `|fp|' elsewhere in the      *)
+(* table, and no conflicting `lo' value held by concurrent evict sorters.  *)
+(* Composed with `CasProbeUniqueAbsFp' in the proof module as            *)
+(* `CasFreshness'.                                                          *)
+(***************************************************************************)
+CasFreshnessCore ==
+  \A self \in Writer :
+    pc[self] = "cas" /\
+    table[idx(fp[self], index[self])] = expected[self] =>
+      /\ idx(fp[self], index[self]) \in 1..K
+      /\ \A k \in 1..K :
+           k # idx(fp[self], index[self]) /\ table[k] # empty =>
+             abs(table[k]) # abs(fp[self])
+      /\ \A s2 \in Writer :
+           pc[s2] \in {"nestedIns", "set"} /\ lo[s2] # empty =>
+             abs(lo[s2]) # abs(fp[self])
        
 (***************************************************************************)
 (* True when no eviction is running.                                       *)
