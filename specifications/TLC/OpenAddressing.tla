@@ -76,9 +76,12 @@ subSeqLarger(seq1, seq2) == IF seq2 = <<>>
 
 (***************************************************************************)
 (* TRUE iff the sequence seq contains the element elem.                    *)
+(* Apalache BMC requires a numeric literal domain for `i \\in a..b' here;   *)
+(* increase 512 if model-checked sequences can be longer (guard keeps Len). *)
 (***************************************************************************)
 \* @type: (Seq(Int), Int) => Bool;
-containsElem(seq, elem) == \E i \in 1..Len(seq): seq[i] = elem
+containsElem(seq, elem) ==
+  \E i \in 1..512: i <= Len(seq) /\ seq[i] = elem
                     
 (***************************************************************************)
 (* The minimum and maximum element in set S.                               *)
@@ -787,7 +790,7 @@ Termination == <>(\A self \in ProcSet: pc[self] = "Done")
 ----------------------------------------------------------------------------
 
 contains(f,t,seq,Q) == \/ \E i \in 0..Q: isMatch(f,idx(f,i),t)
-                       \/ \E i \in 1..Len(seq): seq[i] = f
+                       \/ \E i \in 1..512: i <= Len(seq) /\ seq[i] = f
                        \/ IF f \in (Image(lo) \ {0}) THEN evict = TRUE
                                                      ELSE FALSE
 
@@ -843,6 +846,34 @@ CasFreshnessCexConstants ==
   /\ fps = {1, 2}
   /\ empty = 0
   /\ Writer = {"w"}
+  /\ Reader = {}
+
+(***************************************************************************)
+(* Larger constant bundles for Apalache / TLC bounded runs (`--cinit').    *)
+(* All satisfy OAAssumption when taken as a conjunction of equalities.      *)
+(***************************************************************************)
+ApalacheConstantsMedium ==
+  /\ K = 8
+  /\ L = 3
+  /\ fps = 1..6
+  /\ empty = 0
+  /\ Writer = {"w1", "w2"}
+  /\ Reader = {}
+
+ApalacheConstantsLarge ==
+  /\ K = 16
+  /\ L = 5
+  /\ fps = 1..12
+  /\ empty = 0
+  /\ Writer = {"w1", "w2", "w3"}
+  /\ Reader = {}
+
+ApalacheConstantsXLarge ==
+  /\ K = 32
+  /\ L = 10
+  /\ fps = 1..20
+  /\ empty = 0
+  /\ Writer = {"w1", "w2", "w3", "w4"}
   /\ Reader = {}
 
 (***************************************************************************)
