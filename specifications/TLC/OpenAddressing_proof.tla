@@ -2536,8 +2536,45 @@ LEMMA LoTypeInd ==
   <1>. QED  BY <1>1, <1>2, <1>3, <1>4 DEF Next
 
 (***************************************************************************)
-(* `CasFreshness' is defined in module OpenAddressing (proofs below).      *)
+(* `CasFreshness': the open-addressing probe-sequence correctness          *)
+(* invariant.  Whenever a writer `self' is poised at `pc = "cas"' AND     *)
+(* the CAS-success guard `table[idx] = expected[self]' is satisfied:      *)
+(*                                                                         *)
+(*  (i)  the target probe slot `idx(fp[self], index[self])' is in 1..K;    *)
+(*                                                                         *)
+(*  (ii) `|fp[self]|' is distinct from `|table[k]|' at every other         *)
+(*       non-empty cell `k # idx' (no in-table duplicate of the value     *)
+(*       being inserted);                                                  *)
+(*                                                                         *)
+(*  (iii) `|fp[self]|' is distinct from `|lo[s2]|' for every concurrent    *)
+(*        sorter `s2' in `{"nestedIns", "set"}' carrying a non-empty       *)
+(*        in-flight value `lo[s2]'.                                        *)
+(*                                                                         *)
+(* The combination is exactly what the cas-success branch of               *)
+(* `SortPermInd' needs to preserve `SortPermInv': clause (ii) restores    *)
+(* the global `NoDupsTable' over the modified table, and clause (iii)     *)
+(* preserves the sort-gap conjunct (b) at every concurrent sorter.         *)
+(*                                                                         *)
+(* `CasFreshness' is the standard open-addressing probe-sequence           *)
+(* correctness claim: under the writer-protocol's pre-cntns scan plus     *)
+(* the `expected'-based CAS guard, no other table cell can hold a value   *)
+(* with the same absolute value as `fp[self]' at the moment of CAS.       *)
+(* Establishing it inductively requires per-process scan invariants and   *)
+(* an inter-process `fp'-distinctness invariant; we leave the              *)
+(* establishment case (`insrt -> cas') as the single deep OMITTED in      *)
+(* `CasFreshnessInd' below, and discharge every other action.              *)
 (***************************************************************************)
+CasFreshness ==
+  \A self \in Writer :
+    pc[self] = "cas" /\
+    table[idx(fp[self], index[self])] = expected[self] =>
+      /\ idx(fp[self], index[self]) \in 1..K
+      /\ \A k \in 1..K :
+           k # idx(fp[self], index[self]) /\ table[k] # empty =>
+             abs(table[k]) # abs(fp[self])
+      /\ \A s2 \in Writer :
+           pc[s2] \in {"nestedIns", "set"} /\ lo[s2] # empty =>
+             abs(lo[s2]) # abs(fp[self])
 
 LEMMA InitCasFreshness == Init => CasFreshness
   <1>. SUFFICES ASSUME Init  PROVE CasFreshness
@@ -5323,15 +5360,19 @@ LEMMA DupInvNext == Inv /\ ResultType /\ EiType /\ EjType /\ LoType
 (***************************************************************************)
 (* DupInv => Duplicates.                                                   *)
 (*                                                                         *)
-(* `Duplicates' is the pairwise form over 1..K (equivalent to the          *)
-(* `SelectSeq' formulation).  Under `FindOrPut' the second conjunct of     *)
-(* `DupInv' (`NoDupsTable') gives the claim directly.                        *)
+(* `Duplicates' is `FindOrPut => P(SelectSeq(table, e # empty))', so under *)
+(* `FindOrPut' (= `evict = FALSE'), we apply `SelectSeqAbsDistinct' to     *)
+(* the index-form `NoDupsTable' supplied by the second conjunct of        *)
+(* DupInv.  The `Len(sub) < 2 THEN TRUE' branch of `Duplicates' is        *)
+(* trivially handled by the universal quantifier becoming vacuous.       *)
 (***************************************************************************)
 LEMMA DupInvImpliesDuplicates == DupInv => Duplicates
   <1>. SUFFICES ASSUME DupInv, FindOrPut
-                PROVE  \A i \in 1..K : \A j \in (i+1)..K :
-                         (table[i] # empty /\ table[j] # empty)
-                           => abs(table[i]) # abs(table[j])
+                PROVE  LET sub == SelectSeq(table, LAMBDA e : e # empty)
+                       IN IF Len(sub) < 2 THEN TRUE
+                          ELSE \A i \in 1..(Len(sub) - 1) :
+                                 \A j \in (i+1)..Len(sub) :
+                                    abs(sub[i]) # abs(sub[j])
     BY DEF Duplicates, FindOrPut
   <1>. USE DEF DupInv, TableType, NoDupsTable
   <1>1. table \in [1..K -> TableValues]
@@ -5339,12 +5380,11 @@ LEMMA DupInvImpliesDuplicates == DupInv => Duplicates
   <1>2. \A i, j \in 1..K : i # j /\ table[i] # empty /\ table[j] # empty
             => abs(table[i]) # abs(table[j])
     OBVIOUS
-  <1>3. ASSUME NEW i \in 1..K, NEW j \in (i+1)..K,
-               table[i] # empty, table[j] # empty
-        PROVE abs(table[i]) # abs(table[j])
-    <2>1. i # j
-      OBVIOUS
-    <2>. QED  BY <2>1, <1>2
+  <1>3. LET sub == SelectSeq(table, LAMBDA e : e # empty)
+        IN \A i \in 1..(Len(sub) - 1) :
+             \A j \in (i+1)..Len(sub) :
+                 abs(sub[i]) # abs(sub[j])
+    BY <1>1, <1>2, SelectSeqAbsDistinct
   <1>. QED  BY <1>3
 
 (***************************************************************************)

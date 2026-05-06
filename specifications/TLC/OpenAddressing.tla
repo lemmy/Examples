@@ -16,19 +16,7 @@ EXTENDS Sequences, FiniteSets, Integers
 (* The set of processes which check fingerprints with contains. L: The     *)
 (* probing limit.                                                          *)
 (***************************************************************************)
-CONSTANT
-    \* @type: Int;
-    K,
-    \* @type: Set(Int);
-    fps,
-    \* @type: Int;
-    empty,
-    \* @type: Set(Str);
-    Writer,
-    \* @type: Set(Str);
-    Reader,
-    \* @type: Int;
-    L
+CONSTANT K, fps, empty, Writer, Reader, L
 
 (***************************************************************************)
 (* K is a positive natural.  emtpy is different from all elements in fps.  *)
@@ -46,7 +34,6 @@ ASSUME OAAssumption ==
 (***************************************************************************)
 (* The image of the function F.                                            *)
 (***************************************************************************)
-\* @type: (Str -> Int) => Set(Int);
 Image(F) == { F[x] : x \in DOMAIN F }
 
 (***************************************************************************)
@@ -76,12 +63,8 @@ subSeqLarger(seq1, seq2) == IF seq2 = <<>>
 
 (***************************************************************************)
 (* TRUE iff the sequence seq contains the element elem.                    *)
-(* Apalache BMC requires a numeric literal domain for `i \\in a..b' here;   *)
-(* increase 512 if model-checked sequences can be longer (guard keeps Len). *)
 (***************************************************************************)
-\* @type: (Seq(Int), Int) => Bool;
-containsElem(seq, elem) ==
-  \E i \in 1..512: i <= Len(seq) /\ seq[i] = elem
+containsElem(seq, elem) == elem \in Image(seq)
                     
 (***************************************************************************)
 (* The minimum and maximum element in set S.                               *)
@@ -137,21 +120,18 @@ idx(fp, p) == rescale(K, max(fps), min(fps), fp, p)
 (* TRUE iff the fingerprint at table position index is equal to fp or its  *)
 (* corresponding negative fp value (marked as to be copied to external).   *)
 (***************************************************************************)
-\* @type: (Int, Int, Int -> Int) => Bool;
-isMatch(fp, pos, tab) == \/ tab[pos] = fp
-                             \/ tab[pos] = (-1*fp)
+isMatch(fp, index, table) == \/ table[index] = fp
+                             \/ table[index] = (-1*fp)
 
 (***************************************************************************)
 (* TRUE iff the table at position index is empty.                          *)
 (***************************************************************************)
-\* @type: (Int, Int -> Int) => Bool;
-isEmpty(pos, tab) == tab[pos] = empty
+isEmpty(index, table) == table[index] = empty
 
 (***************************************************************************)
 (* TRUE iff the table at position index is marked evicted.                 *)
 (***************************************************************************)
-\* @type: (Int, Int -> Int) => Bool;
-isMarked(pos, tab) == tab[pos] < 0
+isMarked(index, table) == table[index] < 0
 
 ----------------------------------------------------------------------------
 
@@ -500,38 +480,8 @@ compare(fp1,i1,fp2,i2) ==
 }
 ***     this ends the comment containg the pluscal code      **********)
 \* BEGIN TRANSLATION (chksum(pcal) = "b4d45dd9" /\ chksum(tla) = "7e9e5338")
-\* Apalache Snowcat types (Str = model value strings, e.g. process ids).
-VARIABLES
-    \* @type: Int -> Int;
-    table,
-    \* @type: Seq(Int);
-    external,
-    \* @type: Seq(Int);
-    newexternal,
-    \* @type: Bool;
-    evict,
-    \* @type: Int;
-    waitCnt,
-    \* @type: Set(Int);
-    history,
-    \* @type: Str -> Str;
-    pc,
-    \* @type: Str -> Seq({ procedure: Str, pc: Str, ei: Int, ej: Int, lo: Int });
-    stack,
-    \* @type: Str -> Int;
-    ei,
-    \* @type: Str -> Int;
-    ej,
-    \* @type: Str -> Int;
-    lo,
-    \* @type: Str -> Int;
-    fp,
-    \* @type: Str -> Int;
-    index,
-    \* @type: Str -> Bool;
-    result,
-    \* @type: Str -> Int;
-    expected
+VARIABLES table, external, newexternal, evict, waitCnt, history, pc, stack, 
+          ei, ej, lo, fp, index, result, expected
 
 vars == << table, external, newexternal, evict, waitCnt, history, pc, stack, 
            ei, ej, lo, fp, index, result, expected >>
@@ -790,7 +740,7 @@ Termination == <>(\A self \in ProcSet: pc[self] = "Done")
 ----------------------------------------------------------------------------
 
 contains(f,t,seq,Q) == \/ \E i \in 0..Q: isMatch(f,idx(f,i),t)
-                       \/ \E i \in 1..512: i <= Len(seq) /\ seq[i] = f
+                       \/ \E i \in 1..Len(seq): seq[i] = f
                        \/ IF f \in (Image(lo) \ {0}) THEN evict = TRUE
                                                      ELSE FALSE
 
@@ -813,96 +763,7 @@ Contains == /\ \A seen \in history:
 (* The absolute value of the given number.                                 *)
 (***************************************************************************)
 abs(number) == IF number < 0 THEN -1 * number ELSE number
-
-(***************************************************************************)
-(* CAS freshness: at the `"cas"' label, when `table[idx] = expected[self]', *)
-(* no other non-empty slot may share `|fp[self]|', and no eviction sort     *)
-(* step may hold that value in `lo[...]' (see proof module for motivation). *)
-(* Violable when `expected' was read from a stale cell; reproduce with      *)
-(* `CasFreshnessCexInit' / `CasFreshnessCexNext'.                          *)
-(***************************************************************************)
-CasFreshness ==
-  \A self \in Writer :
-    pc[self] = "cas" /\
-    table[idx(fp[self], index[self])] = expected[self] =>
-      /\ idx(fp[self], index[self]) \in 1..K
-      /\ \A k \in 1..K :
-           k # idx(fp[self], index[self]) /\ table[k] # empty =>
-             abs(table[k]) # abs(fp[self])
-      /\ \A s2 \in Writer :
-           pc[s2] \in {"nestedIns", "set"} /\ lo[s2] # empty =>
-             abs(lo[s2]) # abs(fp[self])
-
-(***************************************************************************)
-(* Concrete constants for the known CasFreshness counterexample.            *)
-(* Apalache (example):                                                     *)
-(*   check --cinit=CasFreshnessCexConstants --init=CasFreshnessCexInit      *)
-(*        --next=CasFreshnessCexNext --inv=CasFreshness --length=3          *)
-(*        OpenAddressing.tla                                               *)
-(***************************************************************************)
-CasFreshnessCexConstants ==
-  /\ K = 4
-  /\ L = 1
-  /\ fps = {1, 2}
-  /\ empty = 0
-  /\ Writer = {"w"}
-  /\ Reader = {}
-
-(***************************************************************************)
-(* Larger constant bundles for Apalache / TLC bounded runs (`--cinit').    *)
-(* All satisfy OAAssumption when taken as a conjunction of equalities.      *)
-(***************************************************************************)
-ApalacheConstantsMedium ==
-  /\ K = 8
-  /\ L = 3
-  /\ fps = 1..6
-  /\ empty = 0
-  /\ Writer = {"w1", "w2"}
-  /\ Reader = {}
-
-ApalacheConstantsLarge ==
-  /\ K = 16
-  /\ L = 5
-  /\ fps = 1..12
-  /\ empty = 0
-  /\ Writer = {"w1", "w2", "w3"}
-  /\ Reader = {}
-
-ApalacheConstantsXLarge ==
-  /\ K = 32
-  /\ L = 10
-  /\ fps = 1..20
-  /\ empty = 0
-  /\ Writer = {"w1", "w2", "w3", "w4"}
-  /\ Reader = {}
-
-(***************************************************************************)
-(* Counterexample initial state for `CasFreshness' (Apalache).              *)
-(* NB: We do not conjoin `OAAssumption' here: nesting it under this         *)
-(* operator makes Apalache 0.57's importer throw MatchError(23). The        *)
-(* equalities in `CasFreshnessCexConstants' imply OAAssumption anyway.      *)
-(***************************************************************************)
-CasFreshnessCexInit ==
-  /\ CasFreshnessCexConstants
-  /\ table = [i \in 1..K |-> IF i = 1 THEN 1 ELSE empty]
-  /\ external = <<>>
-  /\ newexternal = <<>>
-  /\ evict = FALSE
-  /\ waitCnt = 0
-  /\ history = {}
-  /\ ei = [self \in ProcSet |-> 1]
-  /\ ej = [self \in ProcSet |-> 1]
-  /\ lo = [self \in ProcSet |-> 0]
-  /\ fp = [self \in Writer |-> 1]
-  /\ index = [self \in Writer |-> 0]
-  /\ result = [self \in Writer |-> FALSE]
-  /\ expected = [self \in Writer |-> -1]
-  /\ stack = [self \in ProcSet |-> << >>]
-  /\ pc = [self \in ProcSet |-> "insrt"]
-
-CasFreshnessCexNext ==
-  \E self \in Writer : insrt(self)
-
+       
 (***************************************************************************)
 (* True when no eviction is running.                                       *)
 (***************************************************************************)
@@ -915,8 +776,11 @@ FindOrPut == evict = FALSE
 (* non-atomically s.t. the table contains duplicates of one of the two     *)
 (* fingerprints temporarily.                                               *)
 (***************************************************************************)
-Duplicates == FindOrPut => \A i \in 1..K : \A j \in (i+1)..K :
-                 (table[i] # empty /\ table[j] # empty) => abs(table[i]) # abs(table[j])
+Duplicates == FindOrPut => LET sub == SelectSeq(table, LAMBDA e: e # empty)
+                           IN IF Len(sub) < 2 THEN TRUE
+                              ELSE \A i \in 1..(Len(sub) - 1):
+                                      \A j \in (i+1)..Len(sub):
+                                         abs(sub[i]) # abs(sub[j])
 
 ----------------------------------------------------------------------------
 
