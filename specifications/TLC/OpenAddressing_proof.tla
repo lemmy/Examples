@@ -5360,19 +5360,15 @@ LEMMA DupInvNext == Inv /\ ResultType /\ EiType /\ EjType /\ LoType
 (***************************************************************************)
 (* DupInv => Duplicates.                                                   *)
 (*                                                                         *)
-(* `Duplicates' is `FindOrPut => P(SelectSeq(table, e # empty))', so under *)
-(* `FindOrPut' (= `evict = FALSE'), we apply `SelectSeqAbsDistinct' to     *)
-(* the index-form `NoDupsTable' supplied by the second conjunct of        *)
-(* DupInv.  The `Len(sub) < 2 THEN TRUE' branch of `Duplicates' is        *)
-(* trivially handled by the universal quantifier becoming vacuous.       *)
+(* `Duplicates' is the pairwise form over 1..K (equivalent to the          *)
+(* `SelectSeq' formulation).  Under `FindOrPut' the second conjunct of     *)
+(* `DupInv' (`NoDupsTable') gives the claim directly.                        *)
 (***************************************************************************)
 LEMMA DupInvImpliesDuplicates == DupInv => Duplicates
   <1>. SUFFICES ASSUME DupInv, FindOrPut
-                PROVE  LET sub == SelectSeq(table, LAMBDA e : e # empty)
-                       IN IF Len(sub) < 2 THEN TRUE
-                          ELSE \A i \in 1..(Len(sub) - 1) :
-                                 \A j \in (i+1)..Len(sub) :
-                                    abs(sub[i]) # abs(sub[j])
+                PROVE  \A i \in 1..K : \A j \in (i+1)..K :
+                         (table[i] # empty /\ table[j] # empty)
+                           => abs(table[i]) # abs(table[j])
     BY DEF Duplicates, FindOrPut
   <1>. USE DEF DupInv, TableType, NoDupsTable
   <1>1. table \in [1..K -> TableValues]
@@ -5380,11 +5376,12 @@ LEMMA DupInvImpliesDuplicates == DupInv => Duplicates
   <1>2. \A i, j \in 1..K : i # j /\ table[i] # empty /\ table[j] # empty
             => abs(table[i]) # abs(table[j])
     OBVIOUS
-  <1>3. LET sub == SelectSeq(table, LAMBDA e : e # empty)
-        IN \A i \in 1..(Len(sub) - 1) :
-             \A j \in (i+1)..Len(sub) :
-                 abs(sub[i]) # abs(sub[j])
-    BY <1>1, <1>2, SelectSeqAbsDistinct
+  <1>3. ASSUME NEW i \in 1..K, NEW j \in (i+1)..K,
+               table[i] # empty, table[j] # empty
+        PROVE abs(table[i]) # abs(table[j])
+    <2>1. i # j
+      OBVIOUS
+    <2>. QED  BY <2>1, <1>2
   <1>. QED  BY <1>3
 
 (***************************************************************************)

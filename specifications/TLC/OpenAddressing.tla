@@ -32,11 +32,6 @@ ASSUME OAAssumption ==
 ----------------------------------------------------------------------------
 
 (***************************************************************************)
-(* The image of the function F.                                            *)
-(***************************************************************************)
-Image(F) == { F[x] : x \in DOMAIN F }
-
-(***************************************************************************)
 (* The element of position Len(seq) of a sequence seq.                     *)
 (***************************************************************************)
 last(seq) == seq[Len(seq)]                     
@@ -64,7 +59,8 @@ subSeqLarger(seq1, seq2) == IF seq2 = <<>>
 (***************************************************************************)
 (* TRUE iff the sequence seq contains the element elem.                    *)
 (***************************************************************************)
-containsElem(seq, elem) == elem \in Image(seq)
+\* @type: (Seq(Int), Int) => Bool;
+containsElem(seq, elem) == elem \in { seq[i] : i \in DOMAIN seq }
                     
 (***************************************************************************)
 (* The minimum and maximum element in set S.                               *)
@@ -126,17 +122,20 @@ idx(fp, p) == rescale(K, max(fps), min(fps), fp, p)
 (* (TLA+ shadowing is fine for TLC and TLAPS).  Definitions are unchanged  *)
 (* up to alpha-renaming.                                                    *)
 (***************************************************************************)
+\* @type: (Int, Int, Int -> Int) => Bool;
 isMatch(fp, pos, tbl) == \/ tbl[pos] = fp
                           \/ tbl[pos] = (-1*fp)
 
 (***************************************************************************)
 (* TRUE iff the table at position pos is empty (see comment on `isMatch'). *)
 (***************************************************************************)
+\* @type: (Int, Int -> Int) => Bool;
 isEmpty(pos, tbl) == tbl[pos] = empty
 
 (***************************************************************************)
 (* TRUE iff the table at position pos is marked evicted (see `isMatch').   *)
 (***************************************************************************)
+\* @type: (Int, Int -> Int) => Bool;
 isMarked(pos, tbl) == tbl[pos] < 0
 
 ----------------------------------------------------------------------------
@@ -747,7 +746,7 @@ Termination == <>(\A self \in ProcSet: pc[self] = "Done")
 
 contains(f,t,seq,Q) == \/ \E i \in 0..Q: isMatch(f,idx(f,i),t)
                        \/ \E i \in 1..Len(seq): seq[i] = f
-                       \/ IF f \in (Image(lo) \ {0}) THEN evict = TRUE
+                       \/ IF f \in ({ lo[x] : x \in DOMAIN lo } \ {0}) THEN evict = TRUE
                                                      ELSE FALSE
 
 (***************************************************************************)
@@ -781,12 +780,12 @@ FindOrPut == evict = FALSE
 (* During eviction, the sort algorithm might swap two fingerprints         *)
 (* non-atomically s.t. the table contains duplicates of one of the two     *)
 (* fingerprints temporarily.                                               *)
+(* Stated pairwise over 1..K (equivalent to the `SelectSeq(table, ...)'   *)
+(* formulation); the pairwise form type-checks under Apalache when `table'  *)
+(* is a function `Int -> Int'.                                              *)
 (***************************************************************************)
-Duplicates == FindOrPut => LET sub == SelectSeq(table, LAMBDA e: e # empty)
-                           IN IF Len(sub) < 2 THEN TRUE
-                              ELSE \A i \in 1..(Len(sub) - 1):
-                                      \A j \in (i+1)..Len(sub):
-                                         abs(sub[i]) # abs(sub[j])
+Duplicates == FindOrPut => \A i \in 1..K : \A j \in (i+1)..K :
+                 (table[i] # empty /\ table[j] # empty) => abs(table[i]) # abs(table[j])
 
 ----------------------------------------------------------------------------
 
