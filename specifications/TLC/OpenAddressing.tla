@@ -117,21 +117,27 @@ rescale(k,maxF,minF,fp,p) == LET f == (k - 1) \div (maxF - minF)
 idx(fp, p) == rescale(K, max(fps), min(fps), fp, p)
 
 (***************************************************************************)
-(* TRUE iff the fingerprint at table position index is equal to fp or its  *)
-(* corresponding negative fp value (marked as to be copied to external).   *)
+(* TRUE iff the fingerprint at table position pos is equal to fp or its    *)
+(* corresponding negative fp value (marked as to be copied to external).     *)
+(*                                                                          *)
+(* Formals are `pos' and `tbl' instead of `index' and `table' because        *)
+(* Apalache's Snowcat type checker confuses parameter names with the        *)
+(* distinct state variables `index' and `table' when they coincide        *)
+(* (TLA+ shadowing is fine for TLC and TLAPS).  Definitions are unchanged  *)
+(* up to alpha-renaming.                                                    *)
 (***************************************************************************)
-isMatch(fp, index, table) == \/ table[index] = fp
-                             \/ table[index] = (-1*fp)
+isMatch(fp, pos, tbl) == \/ tbl[pos] = fp
+                          \/ tbl[pos] = (-1*fp)
 
 (***************************************************************************)
-(* TRUE iff the table at position index is empty.                          *)
+(* TRUE iff the table at position pos is empty (see comment on `isMatch'). *)
 (***************************************************************************)
-isEmpty(index, table) == table[index] = empty
+isEmpty(pos, tbl) == tbl[pos] = empty
 
 (***************************************************************************)
-(* TRUE iff the table at position index is marked evicted.                 *)
+(* TRUE iff the table at position pos is marked evicted (see `isMatch').   *)
 (***************************************************************************)
-isMarked(index, table) == table[index] < 0
+isMarked(pos, tbl) == tbl[pos] < 0
 
 ----------------------------------------------------------------------------
 
