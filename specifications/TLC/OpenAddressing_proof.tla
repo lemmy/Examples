@@ -2574,20 +2574,6 @@ LEMMA InitCasFreshness == Init => CasFreshness
   <1>. QED  BY <1>2 DEF CasFreshness, CasProbeUniqueAbsFp, CasFreshnessCore
 
 (***************************************************************************)
-(* `CasFreshnessInd': inductive preservation of `CasFreshness'.            *)
-(*                                                                         *)
-(* `CasProbeUniqueAbsFp' is exactly the probe hygiene Apalache needs and   *)
-(* TLAPS must show preserved when entering `cas' (esp. `insrt' ->           *)
-(* `cas').  `CasFreshnessCore' is the conditional (i)-(iii) CAS clause.    *)
-(* Discharging both together still hinges on the same deep establishment   *)
-(* step from cntns/onSnc + probe walks; we leave it as OMITTED pending     *)
-(* a TLAPS proof that bridges the scan into `CasProbeUniqueAbsFp'.         *)
-(***************************************************************************)
-LEMMA CasFreshnessInd ==
-  Inv /\ ResultType /\ CasFreshness /\ [Next]_vars => CasFreshness'
-  OMITTED
-
-(***************************************************************************)
 (* `SortPermInv': the sort-permutation invariant for the insertion-sort   *)
 (* body of the `Evict' procedure.  It captures three facts:                *)
 (*                                                                         *)
@@ -2635,6 +2621,1382 @@ SortPermInv ==
                     /\ j # mod(ej[self] + 1, K)
                     /\ table[i] # empty /\ table[j] # empty =>
                 abs(table[i]) # abs(table[j])
+
+(***************************************************************************)
+(* One-shot preservation when the acting writer `self' stays outside the *)
+(* open-addressing insertion/CAS control {`insrt', `cas'} and outside the *)
+(* sort body {`nestedIns', `set'}, leaves `table' fixed, and leaves every *)
+(* other writer's `pc', `fp', `index', and `expected' fixed.              *)
+(***************************************************************************)
+LEMMA CasFreshnessNonInsertSelf ==
+  ASSUME Inv, StackOK, ResultType, EiType, EjType, LoType, DupInv,
+         EvictExclusive, CasFreshness, SortPermInv, [Next]_vars,
+         NEW self \in Writer,
+         /\ table' = table
+         /\ \A w \in Writer :
+              w # self => /\ pc'[w] = pc[w]
+                          /\ fp'[w] = fp[w]
+                          /\ index'[w] = index[w]
+                          /\ expected'[w] = expected[w]
+                          /\ lo'[w] = lo[w]
+         /\ pc'[self] \notin {"insrt", "cas"}
+         /\ pc'[self] \notin {"nestedIns", "set"}
+  PROVE  CasFreshness'
+  <1>. USE DEF CasFreshness, CasProbeUniqueAbsFp, CasFreshnessCore,
+              DupInv, TableType, NoDupsTable, FindOrPut, TableValues,
+              SortPermInv, EvictExclusive, EvictUnion, EvictLabels,
+              Inv, PcRangeOK, PcRange, WriterLabels, StackOK, ProcSet,
+              ResultType, EiType, EjType, LoType
+  <1>1. CasProbeUniqueAbsFp'
+    <2>. SUFFICES ASSUME NEW w \in Writer,
+                         pc'[w] \in {"insrt", "cas"},
+                         NEW k \in 1..K,
+                         /\ table'[k] # empty
+                         /\ abs(table'[k]) = abs(fp'[w])
+                  PROVE k = idx(fp'[w], index'[w])
+      BY DEF CasProbeUniqueAbsFp
+    <2>1. CASE w = self
+      <3>1. pc'[self] \in {"insrt", "cas"}
+        OBVIOUS
+      <3>2. pc'[self] \notin {"insrt", "cas"}
+        OBVIOUS
+      <3>. QED  BY <3>1, <3>2
+    <2>2. CASE w # self
+      <3>1. /\ pc'[w] = pc[w]
+            /\ fp'[w] = fp[w]
+            /\ index'[w] = index[w]
+        BY <2>2
+      <3>2. table'[k] = table[k]
+        OBVIOUS
+      <3>3. /\ pc[w] \in {"insrt", "cas"}
+            /\ table[k] # empty
+            /\ abs(table[k]) = abs(fp[w])
+        BY <3>1, <3>2
+      <3>4. k = idx(fp[w], index[w])
+        BY <3>3 DEF CasFreshness, CasProbeUniqueAbsFp
+      <3>. QED  BY <3>1, <3>4
+    <2>. QED  BY <2>1, <2>2
+  <1>2. CasFreshnessCore'
+    <2>. SUFFICES ASSUME NEW w \in Writer,
+                         pc'[w] = "cas",
+                         table'[idx(fp'[w], index'[w])] = expected'[w]
+                  PROVE /\ idx(fp'[w], index'[w]) \in 1..K
+                        /\ \A kk \in 1..K :
+                             kk # idx(fp'[w], index'[w])
+                             /\ table'[kk] # empty
+                             => abs(table'[kk]) # abs(fp'[w])
+                        /\ \A s2 \in Writer :
+                             pc'[s2] \in {"nestedIns", "set"} /\ lo'[s2] # empty
+                             => abs(lo'[s2]) # abs(fp'[w])
+      BY DEF CasFreshnessCore
+    <2>1. w # self
+      <3>. SUFFICES ASSUME w = self PROVE FALSE
+        OBVIOUS
+      <3>1. pc'[self] = "cas"
+        OBVIOUS
+      <3>2. "cas" \in {"insrt", "cas"}
+        OBVIOUS
+      <3>3. pc'[self] \in {"insrt", "cas"}
+        BY <3>1, <3>2
+      <3>4. pc'[self] \notin {"insrt", "cas"}
+        OBVIOUS
+      <3>. QED  BY <3>3, <3>4
+    <2>2. /\ pc'[w] = pc[w]
+          /\ fp'[w] = fp[w]
+          /\ index'[w] = index[w]
+          /\ expected'[w] = expected[w]
+      BY <2>1
+    <2>3. table' = table
+      OBVIOUS
+    <2>4. pc[w] = "cas" /\ table[idx(fp[w], index[w])] = expected[w]
+      BY <2>2, <2>3
+    <2>5. ASSUME NEW s2 \in Writer,
+                 pc'[s2] \in {"nestedIns", "set"},
+                 lo'[s2] # empty
+          PROVE abs(lo'[s2]) # abs(fp'[w])
+      <3>1. CASE s2 = self
+        <4>1. pc'[self] \in {"nestedIns", "set"}
+          OBVIOUS
+        <4>2. pc'[self] \notin {"nestedIns", "set"}
+          OBVIOUS
+        <4>. QED  BY <4>1, <4>2
+      <3>2. CASE s2 # self
+        <4>1. /\ pc'[s2] = pc[s2]
+              /\ lo'[s2] = lo[s2]
+          BY <3>2
+        <4>2. abs(lo[s2]) # abs(fp[w])
+          BY <4>1, <2>4 DEF CasFreshness, CasFreshnessCore
+        <4>. QED  BY <4>1, <4>2, <2>2
+      <3>. QED  BY <3>1, <3>2
+    <2>6. \A kk \in 1..K :
+             kk # idx(fp'[w], index'[w]) /\ table'[kk] # empty
+             => abs(table'[kk]) # abs(fp'[w])
+      BY <2>4, <2>2, <2>3 DEF CasFreshness, CasFreshnessCore
+    <2>7. idx(fp'[w], index'[w]) \in 1..K
+      BY <2>4, <2>2, <2>3 DEF CasFreshness, CasFreshnessCore
+    <2>. QED  BY <2>5, <2>6, <2>7
+  <1>. QED  BY <1>1, <1>2 DEF CasFreshness
+
+(***************************************************************************)
+(* Failed `cas(self)': `table' = table, `pc'[self] = "insrt'', still at a   *)
+(* probe step indexed like `cas'.  Pre `CasProbeUniqueAbsFp' at `cas' is  *)
+(* literally the same predicate needed post at `insrt' for the same      *)
+(* `table/fp/index'.                                                       *)
+(***************************************************************************)
+LEMMA CasFreshnessCasFail ==
+  ASSUME Inv, StackOK, ResultType, EiType, EjType, LoType, DupInv,
+         EvictExclusive, CasFreshness, SortPermInv, [Next]_vars,
+         NEW self \in Writer,
+         /\ table' = table
+         /\ pc' = [pc EXCEPT ![self] = "insrt"]
+         /\ result' = [result EXCEPT ![self] = FALSE]
+         /\ UNCHANGED << history, fp, index, expected, lo, ei, ej, stack,
+                         external, newexternal, evict, waitCnt >>
+         /\ \A w \in Writer :
+              w # self => /\ pc'[w] = pc[w]
+                          /\ fp'[w] = fp[w]
+                          /\ index'[w] = index[w]
+                          /\ expected'[w] = expected[w]
+                          /\ lo'[w] = lo[w]
+         /\ pc[self] = "cas"
+  PROVE  CasFreshness'
+  <1>. USE DEF CasProbeUniqueAbsFp, CasFreshnessCore
+  <1>0. CasProbeUniqueAbsFp
+    BY DEF CasFreshness
+  <1>00. CasFreshnessCore
+    BY DEF CasFreshness
+  <1>01. pc \in [Writer -> PcRange]
+    BY DEF Inv, PcRangeOK, ProcSet
+  <1>02. /\ fp' = fp
+          /\ index' = index
+          /\ expected' = expected
+          /\ lo' = lo
+    OBVIOUS
+  <1>1. CasProbeUniqueAbsFp'
+    <2>. SUFFICES ASSUME NEW w \in Writer,
+                         pc'[w] \in {"insrt", "cas"},
+                         NEW k \in 1..K,
+                         /\ table'[k] # empty
+                         /\ abs(table'[k]) = abs(fp'[w])
+                  PROVE k = idx(fp'[w], index'[w])
+      BY DEF CasProbeUniqueAbsFp
+    <2>1. CASE w = self
+      <3>1. pc[self] \in {"insrt", "cas"}
+        OBVIOUS
+      <3>2. pc'[w] = "insrt" /\ fp'[w] = fp[w] /\ index'[w] = index[w]
+        BY <2>1, <1>01, <1>02
+      <3>3. table'[k] = table[k]
+        OBVIOUS
+      <3>4. /\ pc[w] \in {"insrt", "cas"}
+            /\ table[k] # empty
+            /\ abs(table[k]) = abs(fp[w])
+        BY <3>2, <3>3
+      <3>5. k = idx(fp[w], index[w])
+        BY <1>0, <3>4 DEF CasProbeUniqueAbsFp
+      <3>. QED  BY <3>2, <3>5
+    <2>2. CASE w # self
+      <3>1. /\ pc'[w] = pc[w]
+            /\ fp'[w] = fp[w]
+            /\ index'[w] = index[w]
+        BY <2>2
+      <3>2. table'[k] = table[k]
+        OBVIOUS
+      <3>3. /\ pc[w] \in {"insrt", "cas"}
+            /\ table[k] # empty
+            /\ abs(table[k]) = abs(fp[w])
+        BY <3>1, <3>2
+      <3>4. k = idx(fp[w], index[w])
+        BY <1>0, <3>3 DEF CasProbeUniqueAbsFp
+      <3>. QED  BY <3>1, <3>4
+    <2>. QED  BY <2>1, <2>2
+  <1>2. CasFreshnessCore'
+    <2>. SUFFICES ASSUME NEW w \in Writer,
+                         pc'[w] = "cas",
+                         table'[idx(fp'[w], index'[w])] = expected'[w]
+                  PROVE /\ idx(fp'[w], index'[w]) \in 1..K
+                        /\ \A kk \in 1..K :
+                             kk # idx(fp'[w], index'[w])
+                             /\ table'[kk] # empty
+                             => abs(table'[kk]) # abs(fp'[w])
+                        /\ \A s2 \in Writer :
+                             pc'[s2] \in {"nestedIns", "set"} /\ lo'[s2] # empty
+                             => abs(lo'[s2]) # abs(fp'[w])
+      BY DEF CasFreshnessCore
+    <2>1. w # self
+      <3>1. pc'[self] = "insrt"
+        BY <1>01
+      <3>2. ASSUME w = self PROVE FALSE
+        <4>1. pc'[w] = "cas"
+          OBVIOUS
+        <4>2. pc'[self] = "cas"
+          BY <3>2, <4>1
+        <4>. QED  BY <3>1, <4>2
+      <3>. QED  BY <3>2
+    <2>2. /\ pc'[w] = pc[w]
+          /\ fp'[w] = fp[w]
+          /\ index'[w] = index[w]
+          /\ expected'[w] = expected[w]
+      BY <2>1
+    <2>3. table' = table
+      OBVIOUS
+    <2>4. pc[w] = "cas" /\ table[idx(fp[w], index[w])] = expected[w]
+      BY <2>2, <2>3
+    <2>5. \A s2 \in Writer :
+             pc'[s2] \in {"nestedIns", "set"} /\ lo'[s2] # empty
+             => abs(lo'[s2]) # abs(fp'[w])
+      <3>. SUFFICES ASSUME NEW s2 \in Writer,
+                           pc'[s2] \in {"nestedIns", "set"},
+                           lo'[s2] # empty
+                    PROVE abs(lo'[s2]) # abs(fp'[w])
+        OBVIOUS
+      <3>1. CASE s2 = self
+        <4>1. pc'[self] = "insrt"
+          BY <1>01
+        <4>2. ~(pc'[self] \in {"nestedIns", "set"})
+          BY <4>1
+        <4>3. pc'[s2] \in {"nestedIns", "set"}
+          OBVIOUS
+        <4>4. pc'[self] \in {"nestedIns", "set"}
+          BY <3>1, <4>3
+        <4>. QED  BY <4>2, <4>4
+      <3>2. CASE s2 # self
+        <4>1. /\ pc'[s2] = pc[s2]
+              /\ lo'[s2] = lo[s2]
+          BY <3>2
+        <4>2. abs(lo[s2]) # abs(fp[w])
+          BY <1>00, <4>1, <2>4 DEF CasFreshnessCore
+        <4>. QED  BY <4>1, <4>2, <2>2
+      <3>. QED  BY <3>1, <3>2
+    <2>6. \A kk \in 1..K :
+             kk # idx(fp'[w], index'[w]) /\ table'[kk] # empty
+             => abs(table'[kk]) # abs(fp'[w])
+      BY <1>00, <2>4, <2>2, <2>3 DEF CasFreshnessCore
+    <2>7. idx(fp'[w], index'[w]) \in 1..K
+      BY <1>00, <2>4, <2>2, <2>3 DEF CasFreshnessCore
+    <2>. QED  BY <2>5, <2>6, <2>7
+  <1>. QED  BY <1>1, <1>2 DEF CasFreshness
+
+(***************************************************************************)
+(* When the active writer moves to `insrt' while leaving `table' and every *)
+(* other writer's `pc/fp/index/expected/lo' fixed, `CasFreshnessCore''    *)
+(* is just a relabeling of the pre-state core: the only new `cas'-poised *)
+(* writers are the old ones, with identical probe data.                      *)
+(***************************************************************************)
+LEMMA CasFreshnessCorePrimeInsrtSelf ==
+  ASSUME CasFreshnessCore,
+         NEW self \in Writer,
+         /\ table' = table
+         /\ pc' = [pc EXCEPT ![self] = "insrt"]
+         /\ \A w \in Writer :
+              w # self => /\ pc'[w] = pc[w]
+                          /\ fp'[w] = fp[w]
+                          /\ index'[w] = index[w]
+                          /\ expected'[w] = expected[w]
+                          /\ lo'[w] = lo[w]
+  PROVE  CasFreshnessCore'
+  <1>. USE DEF CasFreshnessCore
+  <1>. SUFFICES ASSUME NEW w \in Writer,
+                       pc'[w] = "cas",
+                       table'[idx(fp'[w], index'[w])] = expected'[w]
+                PROVE  /\ idx(fp'[w], index'[w]) \in 1..K
+                       /\ \A kk \in 1..K :
+                            kk # idx(fp'[w], index'[w])
+                            /\ table'[kk] # empty
+                            => abs(table'[kk]) # abs(fp'[w])
+                       /\ \A s2 \in Writer :
+                            pc'[s2] \in {"nestedIns", "set"} /\ lo'[s2] # empty
+                            => abs(lo'[s2]) # abs(fp'[w])
+    OBVIOUS
+  <1>1. w # self
+    <2>1. pc'[self] = "insrt"
+      OBVIOUS
+    <2>2. ASSUME w = self PROVE FALSE
+      <3>1. pc'[w] = "cas"
+        OBVIOUS
+      <3>. QED  BY <2>1, <3>1
+    <2>. QED  BY <2>2
+  <1>2. /\ pc'[w] = pc[w]
+        /\ fp'[w] = fp[w]
+        /\ index'[w] = index[w]
+        /\ expected'[w] = expected[w]
+    BY <1>1
+  <1>3. table' = table
+    OBVIOUS
+  <1>4. pc[w] = "cas" /\ table[idx(fp[w], index[w])] = expected[w]
+    BY <1>2, <1>3
+  <1>5. ASSUME NEW s2 \in Writer,
+               pc'[s2] \in {"nestedIns", "set"},
+               lo'[s2] # empty
+        PROVE abs(lo'[s2]) # abs(fp'[w])
+    <2>1. s2 # self
+      <3>1. pc'[self] = "insrt"
+        OBVIOUS
+      <3>2. ASSUME s2 = self PROVE FALSE
+        <4>1. pc'[s2] \in {"nestedIns", "set"}
+          OBVIOUS
+        <4>2. pc'[self] \in {"nestedIns", "set"}
+          BY <4>1, <3>2
+        <4>3. ~(pc'[self] \in {"nestedIns", "set"})
+          BY <3>1
+        <4>. QED  BY <4>2, <4>3
+      <3>. QED  BY <3>2
+    <2>2. /\ pc'[s2] = pc[s2]
+          /\ lo'[s2] = lo[s2]
+      BY <2>1
+    <2>3. abs(lo[s2]) # abs(fp[w])
+      BY <2>2, <1>4 DEF CasFreshnessCore
+    <2>. QED  BY <2>2, <2>3, <1>2
+  <1>6. \A kk \in 1..K :
+           kk # idx(fp'[w], index'[w]) /\ table'[kk] # empty
+           => abs(table'[kk]) # abs(fp'[w])
+    BY <1>4, <1>2, <1>3 DEF CasFreshnessCore
+  <1>7. idx(fp'[w], index'[w]) \in 1..K
+    BY <1>4, <1>2, <1>3 DEF CasFreshnessCore
+  <1>. QED  BY <1>5, <1>6, <1>7
+
+(***************************************************************************)
+(* Scan-to-`insrt' obligations (1)--(3): only `CasProbeUniqueAbsFp'' is  *)
+(* still open at `w = self'; see `CasProbeUniqueAbsFp'' proof steps.      *)
+(* Successful `cas' (5) reuses the `DupInvNext' / `SortPermInd' arithmetic. *)
+(* `CasFreshnessEvictStep'' (6) leaves table-mutating sort actions as      *)
+(* `OMITTED' for now (mirrors the depth of `SortPermInd' here).            *)
+(***************************************************************************)
+LEMMA CasFreshnessChkSncToInsrt ==
+  ASSUME Inv, StackOK, ResultType, EiType, EjType, LoType, DupInv,
+         EvictExclusive, CasFreshness, SortPermInv, [Next]_vars,
+         NEW self \in Writer, chkSnc(self), external = <<>>
+  PROVE  CasFreshness'
+  <1>. USE DEF CasFreshness, CasProbeUniqueAbsFp, CasFreshnessCore,
+              chkSnc, DupInv, TableType, NoDupsTable, FindOrPut, TableValues,
+              SortPermInv, EvictExclusive, EvictUnion, EvictLabels,
+              Inv, PcRangeOK, PcRange, WriterLabels, StackOK, ProcSet,
+              ResultType, EiType, EjType, LoType
+  <1>1. table' = table
+    OBVIOUS
+  <1>2. pc' = [pc EXCEPT ![self] = "insrt"]
+    OBVIOUS
+  <1>3. \A w \in Writer :
+           w # self => /\ pc'[w] = pc[w]
+                       /\ fp'[w] = fp[w]
+                       /\ index'[w] = index[w]
+                       /\ expected'[w] = expected[w]
+                       /\ lo'[w] = lo[w]
+    OBVIOUS
+  <1>4. UNCHANGED << fp, index, expected, lo >>
+    OBVIOUS
+  <1>5. CasProbeUniqueAbsFp'
+    <2>. SUFFICES ASSUME NEW w \in Writer,
+                         pc'[w] \in {"insrt", "cas"},
+                         NEW k \in 1..K,
+                         /\ table'[k] # empty
+                         /\ abs(table'[k]) = abs(fp'[w])
+                  PROVE k = idx(fp'[w], index'[w])
+      BY DEF CasProbeUniqueAbsFp
+    <2>1. CASE w # self
+      <3>1. CASE pc[w] \in {"insrt", "cas"}
+        <4>1. /\ pc'[w] = pc[w]
+              /\ fp'[w] = fp[w]
+              /\ index'[w] = index[w]
+          BY <2>1
+        <4>2. table'[k] = table[k]
+          BY <1>1
+        <4>3. /\ table[k] # empty
+              /\ abs(table[k]) = abs(fp[w])
+          BY <4>1, <4>2
+        <4>4. k = idx(fp[w], index[w])
+          BY <4>3 DEF CasFreshness, CasProbeUniqueAbsFp
+        <4>. QED  BY <4>1, <4>4
+      <3>2. CASE ~(pc[w] \in {"insrt", "cas"})
+        <4>1. pc'[w] = pc[w]
+          BY <2>1
+        <4>2. pc'[w] \in {"insrt", "cas"}
+          OBVIOUS
+        <4>3. pc[w] \in {"insrt", "cas"}
+          BY <4>1, <4>2
+        <4>. QED  BY <3>2, <4>3
+      <3>. QED  BY <3>1, <3>2
+    <2>2. CASE w = self
+      (*********************************************************************)
+      (* Establishment when `external = <<>>': requires a scan-geometric *)
+      (* argument tying this jump to the inductive probe invariant.       *)
+      (*********************************************************************)
+      OMITTED
+    <2>. QED  BY <2>1, <2>2
+  <1>6. CasFreshnessCore'
+    <2>1. CasFreshnessCore
+      BY DEF CasFreshness
+    <2>. QED  BY CasFreshnessCorePrimeInsrtSelf, <2>1, <1>1, <1>2, <1>3
+  <1>. QED  BY <1>5, <1>6 DEF CasFreshness
+
+LEMMA CasFreshnessOnSncToInsrt ==
+  ASSUME Inv, StackOK, ResultType, EiType, EjType, LoType, DupInv,
+         EvictExclusive, CasFreshness, SortPermInv, [Next]_vars,
+         NEW self \in Writer, onSnc(self), ~containsElem(external, fp[self])
+  PROVE  CasFreshness'
+  <1>. USE DEF CasFreshness, CasProbeUniqueAbsFp, CasFreshnessCore,
+              onSnc, DupInv, TableType, NoDupsTable, FindOrPut, TableValues,
+              SortPermInv, EvictExclusive, EvictUnion, EvictLabels,
+              Inv, PcRangeOK, PcRange, WriterLabels, StackOK, ProcSet,
+              ResultType, EiType, EjType, LoType
+  <1>1. table' = table
+    OBVIOUS
+  <1>2. pc' = [pc EXCEPT ![self] = "insrt"]
+    OBVIOUS
+  <1>3. index' = [index EXCEPT ![self] = expected[self]]
+    OBVIOUS
+  <1>4. expected' = [expected EXCEPT ![self] = -1]
+    OBVIOUS
+  <1>5. \A w \in Writer :
+           w # self => /\ pc'[w] = pc[w]
+                       /\ fp'[w] = fp[w]
+                       /\ index'[w] = index[w]
+                       /\ expected'[w] = expected[w]
+                       /\ lo'[w] = lo[w]
+    OBVIOUS
+  <1>6. UNCHANGED << fp, lo >>
+    OBVIOUS
+  <1>7. CasProbeUniqueAbsFp'
+    <2>. SUFFICES ASSUME NEW w \in Writer,
+                         pc'[w] \in {"insrt", "cas"},
+                         NEW k \in 1..K,
+                         /\ table'[k] # empty
+                         /\ abs(table'[k]) = abs(fp'[w])
+                  PROVE k = idx(fp'[w], index'[w])
+      BY DEF CasProbeUniqueAbsFp
+    <2>1. CASE w # self
+      <3>1. CASE pc[w] \in {"insrt", "cas"}
+        <4>1. /\ pc'[w] = pc[w]
+              /\ fp'[w] = fp[w]
+              /\ index'[w] = index[w]
+          BY <2>1
+        <4>2. table'[k] = table[k]
+          BY <1>1
+        <4>3. /\ table[k] # empty
+              /\ abs(table[k]) = abs(fp[w])
+          BY <4>1, <4>2
+        <4>4. k = idx(fp[w], index[w])
+          BY <4>3 DEF CasFreshness, CasProbeUniqueAbsFp
+        <4>. QED  BY <4>1, <4>4
+      <3>2. CASE ~(pc[w] \in {"insrt", "cas"})
+        <4>1. pc'[w] = pc[w]
+          BY <2>1
+        <4>2. pc'[w] \in {"insrt", "cas"}
+          OBVIOUS
+        <4>3. pc[w] \in {"insrt", "cas"}
+          BY <4>1, <4>2
+        <4>. QED  BY <3>2, <4>3
+      <3>. QED  BY <3>1, <3>2
+    <2>2. CASE w = self
+      (*********************************************************************)
+      (* Index rewinds to `expected[self]' before `insrt'; full proof     *)
+      (* couples `cntns'/`onSnc' to `CasProbeUniqueAbsFp'.                  *)
+      (*********************************************************************)
+      OMITTED
+    <2>. QED  BY <2>1, <2>2
+  <1>8. CasFreshnessCore'
+    <2>1. CasFreshnessCore
+      BY DEF CasFreshness
+    <2>. QED  BY CasFreshnessCorePrimeInsrtSelf, <2>1, <1>1, <1>2, <1>5
+  <1>. QED  BY <1>7, <1>8 DEF CasFreshness
+
+LEMMA CasFreshnessIsMthToInsrt ==
+  ASSUME Inv, StackOK, ResultType, EiType, EjType, LoType, DupInv,
+         EvictExclusive, CasFreshness, SortPermInv, [Next]_vars,
+         NEW self \in Writer, isMth(self),
+         ~isMatch(fp[self], idx(fp[self], index[self]), table)
+  PROVE  CasFreshness'
+  <1>. USE DEF CasFreshness, CasProbeUniqueAbsFp, CasFreshnessCore,
+              isMth, DupInv, TableType, NoDupsTable, FindOrPut, TableValues,
+              SortPermInv, EvictExclusive, EvictUnion, EvictLabels,
+              Inv, PcRangeOK, PcRange, WriterLabels, StackOK, ProcSet,
+              ResultType, EiType, EjType, LoType
+  <1>1. table' = table
+    OBVIOUS
+  <1>2. pc' = [pc EXCEPT ![self] = "insrt"]
+    OBVIOUS
+  <1>3. index' = [index EXCEPT ![self] = index[self] + 1]
+    OBVIOUS
+  <1>4. UNCHANGED << fp, expected, lo >>
+    OBVIOUS
+  <1>5. \A w \in Writer :
+           w # self => /\ pc'[w] = pc[w]
+                       /\ fp'[w] = fp[w]
+                       /\ index'[w] = index[w]
+                       /\ expected'[w] = expected[w]
+                       /\ lo'[w] = lo[w]
+    OBVIOUS
+  <1>6. CasProbeUniqueAbsFp'
+    <2>. SUFFICES ASSUME NEW w \in Writer,
+                         pc'[w] \in {"insrt", "cas"},
+                         NEW k \in 1..K,
+                         /\ table'[k] # empty
+                         /\ abs(table'[k]) = abs(fp'[w])
+                  PROVE k = idx(fp'[w], index'[w])
+      BY DEF CasProbeUniqueAbsFp
+    <2>1. CASE w # self
+      <3>1. CASE pc[w] \in {"insrt", "cas"}
+        <4>1. /\ pc'[w] = pc[w]
+              /\ fp'[w] = fp[w]
+              /\ index'[w] = index[w]
+          BY <2>1
+        <4>2. table'[k] = table[k]
+          BY <1>1
+        <4>3. /\ table[k] # empty
+              /\ abs(table[k]) = abs(fp[w])
+          BY <4>1, <4>2
+        <4>4. k = idx(fp[w], index[w])
+          BY <4>3 DEF CasFreshness, CasProbeUniqueAbsFp
+        <4>. QED  BY <4>1, <4>4
+      <3>2. CASE ~(pc[w] \in {"insrt", "cas"})
+        <4>1. pc'[w] = pc[w]
+          BY <2>1
+        <4>2. pc'[w] \in {"insrt", "cas"}
+          OBVIOUS
+        <4>3. pc[w] \in {"insrt", "cas"}
+          BY <4>1, <4>2
+        <4>. QED  BY <3>2, <4>3
+      <3>. QED  BY <3>1, <3>2
+    <2>2. CASE w = self
+      (*********************************************************************)
+      (* Probe advanced via `index := index + 1'; see scan lemmas.         *)
+      (*********************************************************************)
+      OMITTED
+    <2>. QED  BY <2>1, <2>2
+  <1>7. CasFreshnessCore'
+    <2>1. CasFreshnessCore
+      BY DEF CasFreshness
+    <2>. QED  BY CasFreshnessCorePrimeInsrtSelf, <2>1, <1>1, <1>2, <1>5
+  <1>. QED  BY <1>6, <1>7 DEF CasFreshness
+
+LEMMA CasFreshnessInsrtToCas ==
+  ASSUME Inv, StackOK, ResultType, EiType, EjType, LoType, DupInv,
+         EvictExclusive, CasFreshness, SortPermInv, [Next]_vars,
+         NEW self \in Writer, insrt(self),
+         index[self] < L,
+         \/ table[idx(fp[self], index[self])] = empty
+         \/ /\ table[idx(fp[self], index[self])] < 0
+            /\ table[idx(fp[self], index[self])] # (-1) * fp[self]
+  PROVE  CasFreshness'
+  <1>. USE DEF CasFreshness, CasProbeUniqueAbsFp, CasFreshnessCore,
+              insrt, DupInv, TableType, NoDupsTable, FindOrPut, TableValues,
+              SortPermInv, EvictExclusive, EvictUnion, EvictLabels,
+              Inv, PcRangeOK, PcRange, WriterLabels, StackOK, ProcSet,
+              ResultType, EiType, EjType, LoType
+  <1>1. table' = table
+    OBVIOUS
+  <1>2. pc' = [pc EXCEPT ![self] = "cas"]
+    OBVIOUS
+  <1>3. expected' = [expected EXCEPT ![self] = table[idx(fp[self], index[self])]]
+    OBVIOUS
+  <1>4. UNCHANGED << fp, index, lo, history, external, newexternal,
+                     evict, waitCnt, stack, ei, ej, result >>
+    OBVIOUS
+  <1>5. pc[self] = "insrt"
+    OBVIOUS
+  <1>6. \A w \in Writer :
+           w # self => /\ pc'[w] = pc[w]
+                       /\ fp'[w] = fp[w]
+                       /\ index'[w] = index[w]
+                       /\ expected'[w] = expected[w]
+                       /\ lo'[w] = lo[w]
+    OBVIOUS
+  <1>7. CasProbeUniqueAbsFp'
+    <2>. SUFFICES ASSUME NEW w \in Writer,
+                         pc'[w] \in {"insrt", "cas"},
+                         NEW k \in 1..K,
+                         /\ table'[k] # empty
+                         /\ abs(table'[k]) = abs(fp'[w])
+                  PROVE k = idx(fp'[w], index'[w])
+      BY DEF CasProbeUniqueAbsFp
+    <2>1. CASE w = self
+      <3>1. pc[self] \in {"insrt", "cas"}
+        BY <1>5
+      <3>2. pc'[w] = "cas" /\ fp'[w] = fp[w] /\ index'[w] = index[w]
+        BY <2>1
+      <3>3. table'[k] = table[k]
+        BY <1>1
+      <3>4. /\ table[k] # empty
+            /\ abs(table[k]) = abs(fp[w])
+        BY <3>2, <3>3
+      <3>5. k = idx(fp[w], index[w])
+        BY <3>4 DEF CasFreshness, CasProbeUniqueAbsFp
+      <3>. QED  BY <3>2, <3>5
+    <2>2. CASE w # self
+      <3>1. /\ pc'[w] = pc[w]
+            /\ fp'[w] = fp[w]
+            /\ index'[w] = index[w]
+        BY <2>2
+      <3>2. table'[k] = table[k]
+        BY <1>1
+      <3>3. /\ pc[w] \in {"insrt", "cas"}
+            /\ table[k] # empty
+            /\ abs(table[k]) = abs(fp[w])
+        BY <3>1, <3>2
+      <3>4. k = idx(fp[w], index[w])
+        BY <3>3 DEF CasFreshness, CasProbeUniqueAbsFp
+      <3>. QED  BY <3>1, <3>4
+    <2>. QED  BY <2>1, <2>2
+  <1>8. CasFreshnessCore'
+    <2>. USE DEF CasFreshnessCore
+    <2>1. ASSUME NEW w \in Writer,
+                 w # self,
+                 pc'[w] = "cas",
+                 table'[idx(fp'[w], index'[w])] = expected'[w]
+          PROVE /\ idx(fp'[w], index'[w]) \in 1..K
+                /\ \A kk \in 1..K :
+                     kk # idx(fp'[w], index'[w])
+                     /\ table'[kk] # empty
+                     => abs(table'[kk]) # abs(fp'[w])
+                /\ \A s2 \in Writer :
+                     pc'[s2] \in {"nestedIns", "set"} /\ lo'[s2] # empty
+                     => abs(lo'[s2]) # abs(fp'[w])
+      <3>1. /\ pc'[w] = pc[w]
+            /\ fp'[w] = fp[w]
+            /\ index'[w] = index[w]
+            /\ expected'[w] = expected[w]
+        BY <2>1
+      <3>2. table' = table
+        BY <1>1
+      <3>3. pc[w] = "cas" /\ table[idx(fp[w], index[w])] = expected[w]
+        BY <3>1, <3>2, <2>1
+      <3>4. ASSUME NEW s2 \in Writer,
+                   pc'[s2] \in {"nestedIns", "set"},
+                   lo'[s2] # empty
+            PROVE abs(lo'[s2]) # abs(fp'[w])
+        <4>1. CASE s2 = self
+          <5>1. pc'[self] = "cas"
+            BY <1>2
+          <5>2. ~(pc'[self] \in {"nestedIns", "set"})
+            BY <5>1
+          <5>. QED  BY <4>1, <5>2
+        <4>2. CASE s2 # self
+          <5>1. /\ pc'[s2] = pc[s2]
+                /\ lo'[s2] = lo[s2]
+            BY <4>2, <1>6
+          <5>2. abs(lo[s2]) # abs(fp[w])
+            BY <5>1, <3>3 DEF CasFreshness, CasFreshnessCore
+          <5>. QED  BY <5>1, <5>2, <3>1
+        <4>. QED  BY <4>1, <4>2
+      <3>5. \A kk \in 1..K :
+               kk # idx(fp'[w], index'[w]) /\ table'[kk] # empty
+               => abs(table'[kk]) # abs(fp'[w])
+        BY <3>3, <3>1, <3>2 DEF CasFreshness, CasFreshnessCore
+      <3>6. idx(fp'[w], index'[w]) \in 1..K
+        BY <3>3, <3>1, <3>2 DEF CasFreshness, CasFreshnessCore
+      <3>. QED  BY <3>4, <3>5, <3>6
+    <2>2. ASSUME NEW w \in Writer,
+                 w = self,
+                 pc'[w] = "cas",
+                 table'[idx(fp'[w], index'[w])] = expected'[w]
+          PROVE /\ idx(fp'[w], index'[w]) \in 1..K
+                /\ \A kk \in 1..K :
+                     kk # idx(fp'[w], index'[w])
+                     /\ table'[kk] # empty
+                     => abs(table'[kk]) # abs(fp'[w])
+                /\ \A s2 \in Writer :
+                     pc'[s2] \in {"nestedIns", "set"} /\ lo'[s2] # empty
+                     => abs(lo'[s2]) # abs(fp'[w])
+      <3>. DEFINE pos == idx(fp[self], index[self])
+      <3>1. idx(fp'[w], index'[w]) = pos
+        BY <2>2
+      <3>2. table' = table
+        BY <1>1
+      <3>3. expected'[self] = table[pos]
+        BY <1>3, <3>1
+      <3>4. table[pos] = expected'[self]
+        BY <2>2, <3>1, <3>2
+      <3>5. pos \in 1..K
+        OMITTED
+      <3>6. \A kk \in 1..K :
+               kk # pos /\ table[kk] # empty
+               => abs(table[kk]) # abs(fp[self])
+        BY <1>5, <3>2 DEF CasFreshness, CasProbeUniqueAbsFp
+      <3>7a. \A kk \in 1..K :
+                kk # pos /\ table'[kk] # empty
+                => abs(table'[kk]) # abs(fp'[w])
+        BY <3>2, <3>6, <2>2
+      <3>8. \A s2 \in Writer :
+               pc'[s2] \in {"nestedIns", "set"} /\ lo'[s2] # empty
+               => abs(lo'[s2]) # abs(fp'[w])
+        (*******************************************************************)
+        (* Clause (iii): still couples concurrent sorters to `insrt'.   *)
+        (*******************************************************************)
+        OMITTED
+      <3>. QED  BY <3>1, <3>5, <3>6, <3>7a, <3>8, <2>2
+    <2>. QED  BY <2>1, <2>2 DEF CasFreshnessCore
+  <1>. QED  BY <1>7, <1>8 DEF CasFreshness
+
+LEMMA CasFreshnessCasSuccess ==
+  ASSUME Inv, StackOK, ResultType, EiType, EjType, LoType, DupInv,
+         EvictExclusive, CasFreshness, SortPermInv, [Next]_vars,
+         NEW self \in Writer, cas(self),
+         table[idx(fp[self], index[self])] = expected[self]
+  PROVE  CasFreshness'
+  <1>. USE DEF CasFreshness, CasProbeUniqueAbsFp, CasFreshnessCore,
+              cas, DupInv, TableType, NoDupsTable, FindOrPut, TableValues,
+              SortPermInv, EvictExclusive, EvictUnion, EvictLabels,
+              Inv, PcRangeOK, PcRange, WriterLabels, StackOK, ProcSet,
+              ResultType, EiType, EjType, LoType
+  <1>. DEFINE pos == idx(fp[self], index[self])
+  <1>S. pc[self] = "cas"
+    OBVIOUS
+  <1>F. /\ pos \in 1..K
+        /\ \A k \in 1..K :
+             k # pos /\ table[k] # empty
+               => abs(table[k]) # abs(fp[self])
+        /\ \A s2 \in Writer :
+             pc[s2] \in {"nestedIns", "set"} /\ lo[s2] # empty
+               => abs(lo[s2]) # abs(fp[self])
+    BY <1>S DEF CasFreshness
+  <1>1. /\ table' = [table EXCEPT ![pos] = fp[self]]
+        /\ result' = [result EXCEPT ![self] = TRUE]
+        /\ pc' = [pc EXCEPT ![self] = "pick"]
+        /\ history' = history \cup {fp[self]}
+        /\ UNCHANGED << external, newexternal, evict, waitCnt, stack, ei, ej,
+                        lo, fp, index, expected >>
+    OBVIOUS
+  <1>2. table'[pos] = fp[self]
+    BY <1>1, <1>F
+  <1>3. \A k \in 1..K : k # pos => table'[k] = table[k]
+    BY <1>1, <1>F
+  <1>4. CasProbeUniqueAbsFp'
+    <2>. SUFFICES ASSUME NEW w \in Writer,
+                         pc'[w] \in {"insrt", "cas"},
+                         NEW k \in 1..K,
+                         /\ table'[k] # empty
+                         /\ abs(table'[k]) = abs(fp'[w])
+                  PROVE k = idx(fp'[w], index'[w])
+      BY DEF CasProbeUniqueAbsFp
+    <2>1. CASE w = self
+      <3>1. pc'[self] = "pick"
+        BY <1>1
+      <3>2. pc'[w] \in {"insrt", "cas"}
+        OBVIOUS
+      <3>3. FALSE
+        BY <2>1, <3>1, <3>2
+      <3>. QED  BY <3>3
+    <2>2. CASE w # self
+      <3>1. /\ fp'[w] = fp[w]
+            /\ index'[w] = index[w]
+            /\ pc'[w] = pc[w]
+        BY <2>2, <1>1
+      <3>2. CASE k = pos
+        <4>1. table'[k] = fp[self]
+          BY <3>2, <1>2
+        <4>2. abs(table'[k]) = abs(fp'[w])
+          OBVIOUS
+        <4>3. abs(fp[self]) = abs(fp[w])
+          BY <4>1, <4>2, <3>1
+        <4>4. pc[w] \in {"insrt", "cas"}
+          BY <3>1
+        <4>5. k = idx(fp[w], index[w])
+          BY <4>3, <4>4, <3>2 DEF CasFreshness, CasProbeUniqueAbsFp
+        <4>6. idx(fp'[w], index'[w]) = idx(fp[w], index[w])
+          BY <3>1
+        <4>. QED  BY <4>5, <4>6
+      <3>3. CASE k # pos
+        <4>1. table'[k] = table[k]
+          BY <3>3, <1>3
+        <4>2. /\ table[k] # empty
+              /\ abs(table[k]) = abs(fp[w])
+          BY <4>1
+        <4>3. k = idx(fp[w], index[w])
+          BY <4>2, <3>1 DEF CasFreshness, CasProbeUniqueAbsFp
+        <4>4. idx(fp'[w], index'[w]) = idx(fp[w], index[w])
+          BY <3>1
+        <4>. QED  BY <4>3, <4>4
+      <3>. QED  BY <3>2, <3>3
+    <2>. QED  BY <2>1, <2>2
+  <1>5. CasFreshnessCore'
+    (***********************************************************************)
+    (* Preservation for other writers' `cas' poses uses the same case split *)
+    (* as `SortPermInd' on successful `cas': compare `idx(fp[w])' with the *)
+    (* modified cell `pos'.  Kept concise here via `OMITTED'.               *)
+    (***********************************************************************)
+    OMITTED
+  <1>. QED  BY <1>4, <1>5 DEF CasFreshness
+
+LEMMA CasFreshnessEvictStep ==
+  ASSUME Inv, StackOK, ResultType, EiType, EjType, LoType, DupInv,
+         EvictExclusive, CasFreshness, SortPermInv, [Next]_vars,
+         NEW self \in ProcSet, Evict(self)
+  PROVE  CasFreshness'
+  <1>. USE DEF CasFreshness, CasProbeUniqueAbsFp, CasFreshnessCore, Evict,
+              strIns, nestedIns, set, flush, rtrn,
+              DupInv, TableType, NoDupsTable, FindOrPut, TableValues,
+              SortPermInv, EvictExclusive, EvictUnion, EvictLabels,
+              Inv, PcRangeOK, PcRange, WriterLabels, StackOK, ProcSet,
+              ResultType, EiType, EjType, LoType
+  <1>1. CASE strIns(self)
+    <2>. USE <1>1 DEF strIns
+    <2>1. table' = table
+      OBVIOUS
+    <2>2. UNCHANGED << fp, index, expected, history >>
+      OBVIOUS
+    <2>3. \A w \in Writer :
+             w # self => /\ pc'[w] = pc[w]
+                         /\ fp'[w] = fp[w]
+                         /\ index'[w] = index[w]
+                         /\ expected'[w] = expected[w]
+                         /\ lo'[w] = lo[w]
+      OBVIOUS
+    <2>4. pc'[self] \in {"nestedIns", "flush"}
+      OBVIOUS
+    <2>5. ~(pc'[self] \in {"insrt", "cas"})
+      BY <2>4
+    <2>6. CasProbeUniqueAbsFp'
+      <3>. SUFFICES ASSUME NEW w \in Writer,
+                           pc'[w] \in {"insrt", "cas"},
+                           NEW k \in 1..K,
+                           /\ table'[k] # empty
+                           /\ abs(table'[k]) = abs(fp'[w])
+                    PROVE k = idx(fp'[w], index'[w])
+        BY DEF CasProbeUniqueAbsFp
+      <3>1. CASE w = self
+        <4>1. FALSE
+          BY <3>1, <2>5
+        <4>. QED  BY <4>1
+      <3>2. CASE w # self
+        <4>1. /\ pc'[w] = pc[w]
+              /\ fp'[w] = fp[w]
+              /\ index'[w] = index[w]
+          BY <3>2, <2>3
+        <4>2. table'[k] = table[k]
+          BY <2>1
+        <4>3. /\ table[k] # empty
+              /\ abs(table[k]) = abs(fp[w])
+          BY <4>1, <4>2
+        <4>4. pc[w] \in {"insrt", "cas"}
+          BY <3>2, <4>1
+        <4>5. k = idx(fp[w], index[w])
+          BY <4>3, <4>4 DEF CasFreshness, CasProbeUniqueAbsFp
+        <4>. QED  BY <4>1, <4>5
+      <3>. QED  BY <3>1, <3>2
+    <2>7. CasFreshnessCore'
+      <3>. SUFFICES ASSUME NEW w \in Writer,
+                           pc'[w] = "cas",
+                           table'[idx(fp'[w], index'[w])] = expected'[w]
+                    PROVE  /\ idx(fp'[w], index'[w]) \in 1..K
+                          /\ \A kk \in 1..K :
+                               kk # idx(fp'[w], index'[w])
+                               /\ table'[kk] # empty
+                               => abs(table'[kk]) # abs(fp'[w])
+                          /\ \A s2 \in Writer :
+                               pc'[s2] \in {"nestedIns", "set"}
+                               /\ lo'[s2] # empty
+                               => abs(lo'[s2]) # abs(fp'[w])
+        BY DEF CasFreshnessCore
+      <3>1. w # self
+        <4>1. pc'[self] \in {"nestedIns", "flush"}
+          BY <2>4
+        <4>2. pc'[w] = "cas"
+          OBVIOUS
+        <4>3. ASSUME w = self PROVE FALSE
+          BY <4>1, <4>2
+        <4>. QED  BY <4>3
+      <3>2. /\ pc'[w] = pc[w]
+            /\ fp'[w] = fp[w]
+            /\ index'[w] = index[w]
+            /\ expected'[w] = expected[w]
+        BY <3>1, <2>3
+      <3>3. pc[w] = "cas" /\ table[idx(fp[w], index[w])] = expected[w]
+        BY <3>2, <2>1
+      <3>4. ASSUME NEW s2 \in Writer,
+                   pc'[s2] \in {"nestedIns", "set"},
+                   lo'[s2] # empty
+            PROVE abs(lo'[s2]) # abs(fp'[w])
+        <4>1. CASE s2 = self
+          <5>1. pc'[self] \in {"nestedIns", "flush"}
+            BY <2>4
+          <5>2. ~(pc'[self] \in {"nestedIns", "set"})
+            BY <5>1
+          <5>. QED  BY <4>1, <5>2
+        <4>2. CASE s2 # self
+          <5>1. /\ pc'[s2] = pc[s2]
+                /\ lo'[s2] = lo[s2]
+            BY <4>2, <2>3
+          <5>2. abs(lo[s2]) # abs(fp[w])
+            BY <5>1, <3>3 DEF CasFreshness, CasFreshnessCore
+          <5>. QED  BY <5>1, <5>2, <3>2
+        <4>. QED  BY <4>1, <4>2
+      <3>5. \A kk \in 1..K :
+               kk # idx(fp'[w], index'[w]) /\ table'[kk] # empty
+               => abs(table'[kk]) # abs(fp'[w])
+        BY <3>3, <3>2, <2>1 DEF CasFreshness, CasFreshnessCore
+      <3>6. idx(fp'[w], index'[w]) \in 1..K
+        BY <3>3, <3>2, <2>1 DEF CasFreshness, CasFreshnessCore
+      <3>. QED  BY <3>4, <3>5, <3>6
+    <2>. QED  BY <2>6, <2>7 DEF CasFreshness
+  <1>2. CASE nestedIns(self)
+    OMITTED
+  <1>3. CASE set(self)
+    OMITTED
+  <1>4. CASE flush(self)
+    OMITTED
+  <1>5. CASE rtrn(self)
+    <2>. USE <1>5 DEF rtrn
+    <2>1. /\ table' = table
+          /\ fp' = fp
+          /\ index' = index
+          /\ expected' = expected
+      OBVIOUS
+    <2>2. \A w \in Writer :
+             w # self => /\ pc'[w] = pc[w]
+                         /\ lo'[w] = lo[w]
+      OBVIOUS
+    <2>3. pc'[self] = "endEv"
+      <3>1. pc[self] = "rtrn"
+        OBVIOUS
+      <3>2. /\ stack[self] # <<>>
+            /\ Head(stack[self]).pc = "endEv"
+        BY <3>1 DEF StackOK
+      <3>3. pc'[self] = Head(stack[self]).pc
+        OBVIOUS
+      <3>. QED  BY <3>2, <3>3
+    <2>4. ~(pc'[self] \in {"insrt", "cas"})
+      BY <2>3
+    <2>5. CasProbeUniqueAbsFp'
+      <3>. SUFFICES ASSUME NEW w \in Writer,
+                           pc'[w] \in {"insrt", "cas"},
+                           NEW k \in 1..K,
+                           /\ table'[k] # empty
+                           /\ abs(table'[k]) = abs(fp'[w])
+                    PROVE k = idx(fp'[w], index'[w])
+        BY DEF CasProbeUniqueAbsFp
+      <3>1. CASE w = self
+        <4>1. FALSE
+          BY <3>1, <2>4
+        <4>. QED  BY <4>1
+      <3>2. CASE w # self
+        <4>1. /\ pc'[w] = pc[w]
+              /\ fp'[w] = fp[w]
+              /\ index'[w] = index[w]
+          BY <3>2, <2>2, <2>1
+        <4>2. table'[k] = table[k]
+          BY <2>1
+        <4>3. /\ table[k] # empty
+              /\ abs(table[k]) = abs(fp[w])
+          BY <4>1, <4>2
+        <4>4. pc[w] \in {"insrt", "cas"}
+          BY <3>2, <4>1
+        <4>5. k = idx(fp[w], index[w])
+          BY <4>3, <4>4 DEF CasFreshness, CasProbeUniqueAbsFp
+        <4>. QED  BY <4>1, <4>5
+      <3>. QED  BY <3>1, <3>2
+    <2>6. CasFreshnessCore'
+      <3>. SUFFICES ASSUME NEW w \in Writer,
+                           pc'[w] = "cas",
+                           table'[idx(fp'[w], index'[w])] = expected'[w]
+                    PROVE  /\ idx(fp'[w], index'[w]) \in 1..K
+                          /\ \A kk \in 1..K :
+                               kk # idx(fp'[w], index'[w])
+                               /\ table'[kk] # empty
+                               => abs(table'[kk]) # abs(fp'[w])
+                          /\ \A s2 \in Writer :
+                               pc'[s2] \in {"nestedIns", "set"}
+                               /\ lo'[s2] # empty
+                               => abs(lo'[s2]) # abs(fp'[w])
+        BY DEF CasFreshnessCore
+      <3>1. w # self
+        <4>1. pc'[self] = "endEv"
+          BY <2>3
+        <4>2. pc'[w] = "cas"
+          OBVIOUS
+        <4>3. ASSUME w = self PROVE FALSE
+          BY <4>1, <4>2
+        <4>. QED  BY <4>3
+      <3>2. /\ pc'[w] = pc[w]
+            /\ fp'[w] = fp[w]
+            /\ index'[w] = index[w]
+            /\ expected'[w] = expected[w]
+        BY <3>1, <2>2, <2>1
+      <3>3. pc[w] = "cas" /\ table[idx(fp[w], index[w])] = expected[w]
+        BY <3>2, <2>1
+      <3>4. ASSUME NEW s2 \in Writer,
+                   pc'[s2] \in {"nestedIns", "set"},
+                   lo'[s2] # empty
+            PROVE abs(lo'[s2]) # abs(fp'[w])
+        <4>1. CASE s2 = self
+          <5>1. pc'[self] = "endEv"
+            BY <2>3
+          <5>2. ~(pc'[self] \in {"nestedIns", "set"})
+            BY <5>1
+          <5>. QED  BY <4>1, <5>2
+        <4>2. CASE s2 # self
+          <5>1. /\ pc'[s2] = pc[s2]
+                /\ lo'[s2] = lo[s2]
+            BY <4>2, <2>2
+          <5>2. abs(lo[s2]) # abs(fp[w])
+            BY <5>1, <3>3 DEF CasFreshness, CasFreshnessCore
+          <5>. QED  BY <5>1, <5>2, <3>2
+        <4>. QED  BY <4>1, <4>2
+      <3>5. \A kk \in 1..K :
+               kk # idx(fp'[w], index'[w]) /\ table'[kk] # empty
+               => abs(table'[kk]) # abs(fp'[w])
+        BY <3>3, <3>2, <2>1 DEF CasFreshness, CasFreshnessCore
+      <3>6. idx(fp'[w], index'[w]) \in 1..K
+        BY <3>3, <3>2, <2>1 DEF CasFreshness, CasFreshnessCore
+      <3>. QED  BY <3>4, <3>5, <3>6
+    <2>. QED  BY <2>5, <2>6 DEF CasFreshness
+  <1>. QED  BY <1>1, <1>2, <1>3, <1>4, <1>5 DEF Evict
+
+(***************************************************************************)
+(* Matches `StrengthenedCasFresh' in `APCasInd.tla'.                        *)
+(*                                                                           *)
+(* `CasFreshnessNonInsertSelf' (proved above) discharges every writer step *)
+(* where the active process stays outside {`insrt',`cas',`nestedIns',`set'} *)
+(* and only touches others' `lo'/pc'/...' at `w # self' as in the lemma.    *)
+(*                                                                           *)
+(* `CasFreshnessCorePrimeInsrtSelf' factors the `CasFreshnessCore'' part of *)
+(* scan-to-`insrt' steps.  Remaining holes: `CasProbeUniqueAbsFp'' at          *)
+(* `w = self' after `chkSnc' / `onSnc' / `isMth' (OMITTED), clause (iii) and  *)
+(* `pos \in 1..K' in `CasFreshnessInsrtToCas' (OMITTED sub-steps), the full   *)
+(* `CasFreshnessCore'' after successful `cas' (OMITTED), and `nestedIns' /    *)
+(* `set' / `flush' in `CasFreshnessEvictStep' (OMITTED).  `strIns' and `rtrn' *)
+(* branches of eviction are fully proved.                                      *)
+(***************************************************************************)
+LEMMA CasFreshnessInd ==
+  Inv /\ StackOK /\ ResultType /\ EiType /\ EjType /\ LoType /\ DupInv
+  /\ EvictExclusive /\ CasFreshness /\ SortPermInv /\ [Next]_vars
+  => CasFreshness'
+  <1>. SUFFICES ASSUME Inv, StackOK, ResultType, EiType, EjType, LoType, DupInv,
+                       EvictExclusive, CasFreshness, SortPermInv, [Next]_vars
+                PROVE CasFreshness'
+    OBVIOUS
+  <1>. USE DEF CasFreshness, CasProbeUniqueAbsFp, CasFreshnessCore,
+              DupInv, TableType, NoDupsTable, FindOrPut, TableValues,
+              SortPermInv, EvictExclusive, EvictUnion, EvictLabels,
+              Inv, PcRangeOK, PcRange, WriterLabels, StackOK, ProcSet,
+              ResultType, EiType, EjType, LoType
+  (***********************************************************************)
+  (* Stutter / terminate: `vars' (hence `CasFreshness') unchanged.         *)
+  (***********************************************************************)
+  <1>1. CASE UNCHANGED vars
+    BY <1>1 DEF vars
+  <1>4. CASE Terminating
+    BY <1>4 DEF Terminating, vars
+  (***********************************************************************)
+  (* Writer body: case split (as in `ResultTypeInd') so backends need not *)
+  (* tackle the full `p(self)' disjunction at once.                        *)
+  (***********************************************************************)
+  <1>2. ASSUME NEW self \in Writer, p(self)
+        PROVE  CasFreshness'
+    <2>. USE <1>2, ProcSetIsWriter DEF p
+    <2>1. CASE pick(self)
+      <3>. USE <2>1, ProcSetIsWriter DEF pick
+      <3>1. table' = table
+        OBVIOUS
+      <3>2. \A w \in Writer :
+              w # self => /\ pc'[w] = pc[w]
+                          /\ fp'[w] = fp[w]
+                          /\ index'[w] = index[w]
+                          /\ expected'[w] = expected[w]
+                          /\ lo'[w] = lo[w]
+        OBVIOUS
+      <3>3. pc'[self] \in {"Done", "put"}
+        OBVIOUS
+      <3>4. pc'[self] \notin {"insrt", "cas"}
+        BY <3>3
+      <3>5. pc'[self] \notin {"nestedIns", "set"}
+        BY <3>3
+      <3>. QED  BY CasFreshnessNonInsertSelf, <3>1, <3>2, <3>4, <3>5
+    <2>2. CASE put(self)
+      <3>. USE <2>2, ProcSetIsWriter DEF put
+      <3>1. table' = table
+        OBVIOUS
+      <3>2. \A w \in Writer :
+              w # self => /\ pc'[w] = pc[w]
+                          /\ fp'[w] = fp[w]
+                          /\ index'[w] = index[w]
+                          /\ expected'[w] = expected[w]
+                          /\ lo'[w] = lo[w]
+        OBVIOUS
+      <3>3. pc'[self] \in {"chkSnc", "waitEv"}
+        OBVIOUS
+      <3>4. pc'[self] \notin {"insrt", "cas"}
+        BY <3>3
+      <3>5. pc'[self] \notin {"nestedIns", "set"}
+        BY <3>3
+      <3>. QED  BY CasFreshnessNonInsertSelf, <3>1, <3>2, <3>4, <3>5
+    <2>3. CASE waitEv(self)
+      <3>. USE <2>3, ProcSetIsWriter DEF waitEv
+      <3>1. table' = table
+        OBVIOUS
+      <3>2. \A w \in Writer :
+              w # self => /\ pc'[w] = pc[w]
+                          /\ fp'[w] = fp[w]
+                          /\ index'[w] = index[w]
+                          /\ expected'[w] = expected[w]
+                          /\ lo'[w] = lo[w]
+        OBVIOUS
+      <3>3. pc'[self] = "endWEv"
+        OBVIOUS
+      <3>4. pc'[self] \notin {"insrt", "cas"}
+        BY <3>3
+      <3>5. pc'[self] \notin {"nestedIns", "set"}
+        BY <3>3
+      <3>. QED  BY CasFreshnessNonInsertSelf, <3>1, <3>2, <3>4, <3>5
+    <2>4. CASE endWEv(self)
+      <3>. USE <2>4, ProcSetIsWriter DEF endWEv
+      <3>1. table' = table
+        OBVIOUS
+      <3>2. \A w \in Writer :
+              w # self => /\ pc'[w] = pc[w]
+                          /\ fp'[w] = fp[w]
+                          /\ index'[w] = index[w]
+                          /\ expected'[w] = expected[w]
+                          /\ lo'[w] = lo[w]
+        OBVIOUS
+      <3>3. pc'[self] = "put"
+        OBVIOUS
+      <3>4. pc'[self] \notin {"insrt", "cas"}
+        BY <3>3
+      <3>5. pc'[self] \notin {"nestedIns", "set"}
+        BY <3>3
+      <3>. QED  BY CasFreshnessNonInsertSelf, <3>1, <3>2, <3>4, <3>5
+    <2>5. CASE chkSnc(self)
+      <3>. USE <2>5 DEF chkSnc
+      <3>1. CASE external # <<>>
+        <4>1. table' = table
+          OBVIOUS
+        <4>2. \A w \in Writer :
+                w # self => /\ pc'[w] = pc[w]
+                            /\ fp'[w] = fp[w]
+                            /\ index'[w] = index[w]
+                            /\ expected'[w] = expected[w]
+                            /\ lo'[w] = lo[w]
+          OBVIOUS
+        <4>3. pc'[self] = "cntns"
+          BY <3>1
+        <4>4. pc'[self] \notin {"insrt", "cas"}
+          BY <4>3
+        <4>5. pc'[self] \notin {"nestedIns", "set"}
+          BY <4>3
+        <4>. QED  BY CasFreshnessNonInsertSelf, <4>1, <4>2, <4>4, <4>5
+      <3>2. CASE external = <<>>
+        <4>. QED  BY CasFreshnessChkSncToInsrt, <3>2 DEF chkSnc
+      <3>. QED  BY <3>1, <3>2
+    <2>6. CASE cntns(self)
+      <3>. USE <2>6 DEF cntns
+      <3>1. table' = table
+        OBVIOUS
+      <3>2. \A w \in Writer :
+              w # self => /\ pc'[w] = pc[w]
+                          /\ fp'[w] = fp[w]
+                          /\ index'[w] = index[w]
+                          /\ expected'[w] = expected[w]
+                          /\ lo'[w] = lo[w]
+        OBVIOUS
+      <3>3. \/
+              /\ ~(index[self] < L)
+              /\ pc'[self] = "onSnc"
+            \/ /\ index[self] < L
+               /\ isMatch(fp[self], idx(fp[self], index[self]), table)
+               /\ pc'[self] = "pick"
+            \/ /\ index[self] < L
+               /\ ~isMatch(fp[self], idx(fp[self], index[self]), table)
+               /\ isEmpty(idx(fp[self], index[self]), table)
+               /\ pc'[self] = "onSnc"
+            \/ /\ index[self] < L
+               /\ ~isMatch(fp[self], idx(fp[self], index[self]), table)
+               /\ ~isEmpty(idx(fp[self], index[self]), table)
+               /\ isMarked(idx(fp[self], index[self]), table)
+               /\ pc'[self] = "cntns"
+            \/ /\ index[self] < L
+               /\ ~isMatch(fp[self], idx(fp[self], index[self]), table)
+               /\ ~isEmpty(idx(fp[self], index[self]), table)
+               /\ ~isMarked(idx(fp[self], index[self]), table)
+               /\ pc'[self] = "cntns"
+        BY DEF cntns
+      <3>4. pc'[self] \notin {"insrt", "cas"}
+        BY <3>3
+      <3>5. pc'[self] \notin {"nestedIns", "set"}
+        BY <3>3
+      <3>. QED  BY CasFreshnessNonInsertSelf, <3>1, <3>2, <3>4, <3>5
+    <2>7. CASE onSnc(self)
+      <3>. USE <2>7 DEF onSnc
+      <3>1. CASE containsElem(external, fp[self])
+        <4>1. table' = table
+          OBVIOUS
+        <4>2. \A w \in Writer :
+                w # self => /\ pc'[w] = pc[w]
+                            /\ fp'[w] = fp[w]
+                            /\ index'[w] = index[w]
+                            /\ expected'[w] = expected[w]
+                            /\ lo'[w] = lo[w]
+          OBVIOUS
+        <4>3. pc'[self] = "pick"
+          BY <3>1
+        <4>4. pc'[self] \notin {"insrt", "cas"}
+          BY <4>3
+        <4>5. pc'[self] \notin {"nestedIns", "set"}
+          BY <4>3
+        <4>. QED  BY CasFreshnessNonInsertSelf, <4>1, <4>2, <4>4, <4>5
+      <3>2. CASE ~containsElem(external, fp[self])
+        <4>. QED  BY CasFreshnessOnSncToInsrt, <3>2 DEF onSnc
+      <3>. QED  BY <3>1, <3>2
+    <2>8. CASE isMth(self)
+      <3>. USE <2>8 DEF isMth
+      <3>1. CASE isMatch(fp[self], idx(fp[self], index[self]), table)
+        <4>1. table' = table
+          OBVIOUS
+        <4>2. \A w \in Writer :
+                w # self => /\ pc'[w] = pc[w]
+                            /\ fp'[w] = fp[w]
+                            /\ index'[w] = index[w]
+                            /\ expected'[w] = expected[w]
+                            /\ lo'[w] = lo[w]
+          OBVIOUS
+        <4>3. pc'[self] = "pick"
+          BY <3>1
+        <4>4. pc'[self] \notin {"insrt", "cas"}
+          BY <4>3
+        <4>5. pc'[self] \notin {"nestedIns", "set"}
+          BY <4>3
+        <4>. QED  BY CasFreshnessNonInsertSelf, <4>1, <4>2, <4>4, <4>5
+      <3>2. CASE ~isMatch(fp[self], idx(fp[self], index[self]), table)
+        <4>. QED  BY CasFreshnessIsMthToInsrt, <3>2 DEF isMth
+      <3>. QED  BY <3>1, <3>2
+    <2>9. CASE insrt(self)
+      <3>. USE <2>9 DEF insrt
+      <3>1. CASE ~(index[self] < L)
+        <4>1. table' = table
+          OBVIOUS
+        <4>2. \A w \in Writer :
+                w # self => /\ pc'[w] = pc[w]
+                            /\ fp'[w] = fp[w]
+                            /\ index'[w] = index[w]
+                            /\ expected'[w] = expected[w]
+                            /\ lo'[w] = lo[w]
+          OBVIOUS
+        <4>3. pc'[self] = "tryEv"
+          BY <3>1
+        <4>4. pc'[self] \notin {"insrt", "cas"}
+          BY <4>3
+        <4>5. pc'[self] \notin {"nestedIns", "set"}
+          BY <4>3
+        <4>. QED  BY CasFreshnessNonInsertSelf, <4>1, <4>2, <4>4, <4>5
+      <3>2. CASE /\ index[self] < L
+                 /\ LET rd == table[idx(fp[self], index[self])]
+                    IN  rd = empty \/ (rd < 0 /\ rd # (-1) * fp[self])
+        <4>. QED  BY CasFreshnessInsrtToCas, <3>2 DEF insrt
+      <3>3. CASE /\ index[self] < L
+                 /\ ~ LET rd == table[idx(fp[self], index[self])]
+                        IN  rd = empty \/ (rd < 0 /\ rd # (-1) * fp[self])
+        <4>1. table' = table
+          BY <3>3 DEF insrt
+        <4>2. \A w \in Writer :
+                w # self => /\ pc'[w] = pc[w]
+                            /\ fp'[w] = fp[w]
+                            /\ index'[w] = index[w]
+                            /\ expected'[w] = expected[w]
+                            /\ lo'[w] = lo[w]
+          OBVIOUS
+        <4>3. pc'[self] = "isMth"
+          BY <3>3 DEF insrt
+        <4>4. pc'[self] \notin {"insrt", "cas"}
+          BY <4>3
+        <4>5. pc'[self] \notin {"nestedIns", "set"}
+          BY <4>3
+        <4>. QED  BY CasFreshnessNonInsertSelf, <4>1, <4>2, <4>4, <4>5
+      <3>. QED  BY <3>1, <3>2, <3>3 DEF insrt
+    <2>10. CASE cas(self)
+      <3>1. CASE table[idx(fp[self],index[self])] = expected[self]
+        <4>. QED  BY CasFreshnessCasSuccess, <2>10, <3>1 DEF cas
+      <3>2. CASE ~(table[idx(fp[self],index[self])] = expected[self])
+        <4>1. table' = table
+          BY <3>2 DEF cas
+        <4>2. pc' = [pc EXCEPT ![self] = "insrt"]
+          BY <3>2 DEF cas
+        <4>3. result' = [result EXCEPT ![self] = FALSE]
+          BY <3>2 DEF cas
+        <4>4. UNCHANGED << history, fp, index, expected, lo, ei, ej, stack,
+                           external, newexternal, evict, waitCnt >>
+          BY <3>2 DEF cas
+        <4>5. \A w \in Writer :
+                w # self => /\ pc'[w] = pc[w]
+                            /\ fp'[w] = fp[w]
+                            /\ index'[w] = index[w]
+                            /\ expected'[w] = expected[w]
+                            /\ lo'[w] = lo[w]
+          BY <3>2 DEF cas
+        <4>6. pc[self] = "cas"
+          BY <2>10 DEF cas
+        <4>. QED  BY CasFreshnessCasFail, <4>1, <4>2, <4>3, <4>4, <4>5, <4>6
+      <3>. QED  BY <3>1, <3>2
+    <2>11. CASE tryEv(self)
+      <3>. USE <2>11, ProcSetIsWriter DEF tryEv
+      <3>1. table' = table
+        OBVIOUS
+      <3>2. \A w \in Writer :
+              w # self => /\ pc'[w] = pc[w]
+                          /\ fp'[w] = fp[w]
+                          /\ index'[w] = index[w]
+                          /\ expected'[w] = expected[w]
+                          /\ lo'[w] = lo[w]
+        OBVIOUS
+      <3>3. pc'[self] \in {"waitIns", "put"}
+        OBVIOUS
+      <3>4. pc'[self] \notin {"insrt", "cas"}
+        BY <3>3
+      <3>5. pc'[self] \notin {"nestedIns", "set"}
+        BY <3>3
+      <3>. QED  BY CasFreshnessNonInsertSelf, <3>1, <3>2, <3>4, <3>5
+    <2>12. CASE waitIns(self)
+      <3>. USE <2>12, ProcSetIsWriter DEF waitIns
+      <3>1. table' = table
+        OBVIOUS
+      <3>2. \A w \in Writer :
+              w # self => /\ pc'[w] = pc[w]
+                          /\ fp'[w] = fp[w]
+                          /\ index'[w] = index[w]
+                          /\ expected'[w] = expected[w]
+                          /\ lo'[w] = lo[w]
+        OBVIOUS
+      <3>3. pc'[self] = "strIns"
+        OBVIOUS
+      <3>4. pc'[self] \notin {"insrt", "cas"}
+        BY <3>3
+      <3>5. pc'[self] \notin {"nestedIns", "set"}
+        BY <3>3
+      <3>. QED  BY CasFreshnessNonInsertSelf, <3>1, <3>2, <3>4, <3>5
+    <2>13. CASE endEv(self)
+      <3>. USE <2>13, ProcSetIsWriter DEF endEv
+      <3>1. table' = table
+        OBVIOUS
+      <3>2. \A w \in Writer :
+              w # self => /\ pc'[w] = pc[w]
+                          /\ fp'[w] = fp[w]
+                          /\ index'[w] = index[w]
+                          /\ expected'[w] = expected[w]
+                          /\ lo'[w] = lo[w]
+        OBVIOUS
+      <3>3. pc'[self] = "put"
+        OBVIOUS
+      <3>4. pc'[self] \notin {"insrt", "cas"}
+        BY <3>3
+      <3>5. pc'[self] \notin {"nestedIns", "set"}
+        BY <3>3
+      <3>. QED  BY CasFreshnessNonInsertSelf, <3>1, <3>2, <3>4, <3>5
+    <2>. QED  BY <2>1, <2>2, <2>3, <2>4, <2>5, <2>6, <2>7,
+                  <2>8, <2>9, <2>10, <2>11, <2>12, <2>13
+  (***********************************************************************)
+  (* `Evict(self)': mirror `SortPermInd' / `DupInvNext' case split.         *)
+  (***********************************************************************)
+  <1>3. ASSUME NEW self \in ProcSet, Evict(self)
+        PROVE  CasFreshness'
+    <2>1. CASE strIns(self)
+      BY CasFreshnessEvictStep, <2>1
+    <2>2. CASE nestedIns(self)
+      BY CasFreshnessEvictStep, <2>2
+    <2>3. CASE set(self)
+      BY CasFreshnessEvictStep, <2>3
+    <2>4. CASE rtrn(self)
+      BY CasFreshnessEvictStep, <2>4
+    <2>5. CASE flush(self)
+      BY CasFreshnessEvictStep, <2>5
+    <2>. QED  BY <1>3, <2>1, <2>2, <2>3, <2>4, <2>5 DEF Evict
+  <1>. QED  BY <1>1, <1>2, <1>3, <1>4 DEF Next
 
 LEMMA InitSortPermInv == Init => SortPermInv
   <1>. SUFFICES ASSUME Init  PROVE SortPermInv
@@ -5409,8 +6771,10 @@ THEOREM DuplicatesSafety == Spec => []Duplicates
       <3>8. Inv /\ StackOK /\ WaitCntInv /\ EvictExclusive /\ [Next]_vars
               => EvictExclusive'
         BY EvictExclusiveInd
-      <3>9. Inv /\ ResultType /\ CasFreshness /\ [Next]_vars
-              => CasFreshness'
+      <3>9. Inv /\ StackOK /\ ResultType /\ EiType /\ EjType /\ LoType
+              /\ DupInv /\ EvictExclusive /\ CasFreshness /\ SortPermInv
+              /\ [Next]_vars
+            => CasFreshness'
         BY CasFreshnessInd
       <3>10. Inv /\ StackOK /\ ResultType /\ EiType /\ EjType /\ LoType
               /\ DupInv /\ EvictExclusive /\ CasFreshness /\ SortPermInv
@@ -6276,8 +7640,10 @@ THEOREM SortedSafety == Spec => []Sorted
       <3>8. Inv /\ StackOK /\ WaitCntInv /\ EvictExclusive /\ [Next]_vars
               => EvictExclusive'
         BY EvictExclusiveInd
-      <3>9. Inv /\ ResultType /\ CasFreshness /\ [Next]_vars
-              => CasFreshness'
+      <3>9. Inv /\ StackOK /\ ResultType /\ EiType /\ EjType /\ LoType
+              /\ DupInv /\ EvictExclusive /\ CasFreshness /\ SortPermInv
+              /\ [Next]_vars
+            => CasFreshness'
         BY CasFreshnessInd
       <3>10. Inv /\ StackOK /\ ResultType /\ EiType /\ EjType /\ LoType
               /\ DupInv /\ EvictExclusive /\ CasFreshness /\ SortPermInv
