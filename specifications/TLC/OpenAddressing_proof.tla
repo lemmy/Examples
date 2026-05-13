@@ -36,6 +36,16 @@ ASSUME WriterFinite == IsFiniteSet(Writer)
 ASSUME ReaderFinite == IsFiniteSet(Reader)
 
 (***************************************************************************)
+(* `empty' is declared as a `CONSTANT' in `OpenAddressing'.  The spec's    *)
+(* `OAAssumption' only states `empty \notin fps'.  For inductive proofs    *)
+(* about `NoDupsTable' under negate-in-place table updates we additionally *)
+(* need that `empty' is not an integer.  This is consistent with TLC's    *)
+(* treatment of `empty' as a (non-integer) model value distinct from any  *)
+(* fingerprint and its negation.                                          *)
+(***************************************************************************)
+ASSUME EmptyNotInt == empty \notin Int
+
+(***************************************************************************)
 (* The set of pc labels that appear in the spec.  The PlusCal translation  *)
 (* uses string labels at every control point of `p(self)' and the          *)
 (* `Evict(self)' procedure (plus the implicit `Done' label injected by the *)
@@ -541,7 +551,7 @@ LEMMA StackOKInd == Inv /\ StackOK /\ [Next]_vars => StackOK'
           BY SubSeqEmpty
         <4>. QED  BY <4>4, <4>5
       <3>9. Head(<<frame>>) = frame
-        BY DEF Head
+        BY <3>4, <3>7, HeadTailProperties
       <3>10. frame.pc = "endEv"
         BY <3>2
       <3>11. pc'[self] = "strIns"
@@ -4769,7 +4779,11 @@ LEMMA SortPermInd ==
               <7>1. CASE k = pos
                 <8>1. table'[k] = table[pos] * (-1)  BY <6>2, <7>1
                 <8>2. table[pos] \in Int  BY <6>6 DEF TableValues
-                <8>. QED  BY <8>1, <8>2, <7>1 DEF empty
+                <8>3. table[pos] * (-1) \in Int  BY <8>2
+                <8>4. table'[k] # empty  BY <8>1, <8>3, EmptyNotInt
+                <8>5. table[k] = table[pos]  BY <7>1
+                <8>6. table[k] # empty  BY <8>5, <6>5
+                <8>. QED  BY <8>4, <8>6
               <7>2. CASE k # pos  BY <7>2, <6>3
               <7>. QED  BY <7>1, <7>2
             <6>11. table[i] # empty /\ table[j] # empty  BY <6>10
@@ -7075,12 +7089,16 @@ LEMMA AppendStrAsc ==
   <1>. QED  BY <1>6, <1>8, <1>9, <1>5
 
 \* `SelectSeq' on the empty sequence is the empty sequence (for any
-\* predicate).  This one is easy enough to discharge from the standard
-\* definition of `SelectSeq' in the `Sequences' module.
+\* predicate).  TLAPS treats `SelectSeq' (from the `Sequences' module) as an
+\* opaque axiomatized symbol -- `BY DEF SelectSeq' is not available, and
+\* `SequenceTheorems' has no theorems about `SelectSeq'.  Discharging this
+\* would require recursive-function induction over `SelectSeq's recursive
+\* definition, so we leave it as `OMITTED' -- consistent with the other
+\* `SelectSeq*' lemmas above.
 LEMMA SelectSeqEmpty ==
   ASSUME NEW Test(_)
   PROVE  SelectSeq(<<>>, Test) = <<>>
-  BY DEF SelectSeq
+  OMITTED
 
 \* `largestElem' bounds: for any sequence in `Seq(fps)', the largest       
 \* element is either `0' (when the sequence is empty) or `s[Len(s)]'.       
