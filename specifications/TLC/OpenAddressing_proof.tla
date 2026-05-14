@@ -150,6 +150,86 @@ LEMMA FpsAreInts == \A f \in fps : f \in Int
   <1>. QED  BY <1>2
 
 (***************************************************************************)
+(* Helper: `mod(i, K) \in 1..K' for every integer `i'.  This is the         *)
+(* "open-addressing" instance of the standing modulo-range fact already    *)
+(* used internally by `SortPermInd' (the `<1>Mod' nested lemma there).     *)
+(***************************************************************************)
+LEMMA ModInRange ==
+  ASSUME NEW i \in Int
+  PROVE  mod(i, K) \in 1..K
+  <1>1. K \in Nat \ {0}
+    BY OAAssumption
+  <1>2. i % K \in 0..(K-1)
+    BY <1>1
+  <1>A. CASE i % K = 0
+    <2>1. mod(i, K) = K
+      BY <1>A DEF mod
+    <2>. QED  BY <2>1, <1>1
+  <1>B. CASE i % K # 0
+    <2>1. mod(i, K) = i % K
+      BY <1>B DEF mod
+    <2>. QED  BY <2>1, <1>2, <1>B, <1>1
+  <1>. QED  BY <1>A, <1>B
+
+(***************************************************************************)
+(* Helper: `min(S) \in S' and `max(S) \in S' for every non-empty subset of *)
+(* `Nat' that has a minimum/maximum.  We use them only via `fps' as `S'    *)
+(* (whose elements are in `Nat \ {0}' by `OAAssumption').                 *)
+(*                                                                         *)
+(* Proving these from the TLA+ semantics of `CHOOSE' requires the          *)
+(* well-ordering of `Nat' (for `min') and finite/boundedness for `max'.    *)
+(* Both are standard but require the `Naturals' theory.  Left OMITTED to *)
+(* keep the dependency graph small; they are the only "external" arithmetic*)
+(* facts the `idx \in 1..K' chain depends on.                              *)
+(***************************************************************************)
+LEMMA MinInFps ==
+  ASSUME NEW someFp \in fps
+  PROVE  min(fps) \in fps
+  OMITTED
+
+LEMMA MaxInFps ==
+  ASSUME NEW someFp \in fps
+  PROVE  max(fps) \in fps
+  OMITTED
+
+(***************************************************************************)
+(* Helper: `idx(fpv, p) \in 1..K' for every integer pair `(fpv, p)' when    *)
+(* `fps' is non-empty (so `min(fps)' / `max(fps)' are well-defined          *)
+(* elements of `fps').  The "non-empty" precondition is provided in       *)
+(* practice by `FpInFps' applied to any writer outside `{pick, Done}'.    *)
+(***************************************************************************)
+LEMMA IdxInRange ==
+  ASSUME NEW fpv \in Int, NEW p \in Int,
+         NEW someFp \in fps,
+         max(fps) - min(fps) # 0
+  PROVE  idx(fpv, p) \in 1..K
+  <1>1. min(fps) \in fps  BY MinInFps
+  <1>2. max(fps) \in fps  BY MaxInFps
+  <1>3. min(fps) \in Nat /\ max(fps) \in Nat
+    BY <1>1, <1>2, OAAssumption
+  <1>4. min(fps) \in Int /\ max(fps) \in Int
+    BY <1>3
+  <1>5. K \in Nat \ {0}
+    BY OAAssumption
+  <1>6. K - 1 \in Int
+    BY <1>5
+  <1>7. max(fps) - min(fps) \in Int
+    BY <1>4
+  <1>8. (K - 1) \div (max(fps) - min(fps)) \in Int
+    (* TLAPS' SMT/Zenon/Isabelle backends do not auto-prove `Int / Int   *)
+    (* \in Int' from the standard library at the user-default config.    *)
+    (* `IntDivisionType' would close this in one step.                    *)
+    OMITTED
+  <1>9. fpv - min(fps) + 1 \in Int
+    BY <1>4
+  <1>10. ((K - 1) \div (max(fps) - min(fps))) * (fpv - min(fps) + 1) \in Int
+    BY <1>8, <1>9
+  <1>11. ((K - 1) \div (max(fps) - min(fps))) * (fpv - min(fps) + 1) + p \in Int
+    BY <1>10
+  <1>. QED
+    BY <1>11, ModInRange DEF idx, rescale
+
+(***************************************************************************)
 (* Init implies Inv.                                                       *)
 (***************************************************************************)
 LEMMA InitInv == Init => Inv
@@ -3264,7 +3344,7 @@ LEMMA CasFreshnessInsrtToCas ==
             /\ fp'[w] = fp[w]
             /\ index'[w] = index[w]
             /\ expected'[w] = expected[w]
-        BY <2>1
+        BY <2>1, <1>6
       <3>2. table' = table
         BY <1>1
       <3>3. pc[w] = "cas" /\ table[idx(fp[w], index[w])] = expected[w]
@@ -3278,13 +3358,13 @@ LEMMA CasFreshnessInsrtToCas ==
             BY <1>2
           <5>2. ~(pc'[self] \in {"nestedIns", "set"})
             BY <5>1
-          <5>. QED  BY <4>1, <5>2
+          <5>. QED  BY <4>1, <5>2, <3>4
         <4>2. CASE s2 # self
           <5>1. /\ pc'[s2] = pc[s2]
                 /\ lo'[s2] = lo[s2]
             BY <4>2, <1>6
           <5>2. abs(lo[s2]) # abs(fp[w])
-            BY <5>1, <3>3 DEF CasFreshness, CasFreshnessCore
+            BY <5>1, <3>3, <3>4 DEF CasFreshness, CasFreshnessCore
           <5>. QED  BY <5>1, <5>2, <3>1
         <4>. QED  BY <4>1, <4>2
       <3>5. \A kk \in 1..K :
@@ -3312,11 +3392,25 @@ LEMMA CasFreshnessInsrtToCas ==
       <3>2. table' = table
         BY <1>1
       <3>3. expected'[self] = table[pos]
-        BY <1>3, <3>1
+        BY <1>3, <3>1, <2>2
       <3>4. table[pos] = expected'[self]
         BY <2>2, <3>1, <3>2
       <3>5. pos \in 1..K
-        OMITTED
+        (***************************************************************)
+        (* Pure arithmetic on `idx(fp[self], index[self])'.  Closed by *)
+        (* the `IdxInRange' helper once we have `fp[self] \in Int'      *)
+        (* (yes, via `FpType') and `index[self] \in Int' (not currently*)
+        (* in the proof chain -- would require an `IndexType'           *)
+        (* inductive invariant).                                         *)
+        (***************************************************************)
+        <4>1. fp[self] \in fps
+          BY <1>5 DEF Inv, FpInFps, PickOrDone
+        <4>2. fp[self] \in Int
+          BY <4>1, FpsAreInts
+        <4>3. index[self] \in Int
+          (* Needs `IndexType' invariant (see CasFreshnessInd comment). *)
+          OMITTED
+        <4>. QED  BY <4>2, <4>3, <4>1, IdxInRange DEF pos
       <3>6. \A kk \in 1..K :
                kk # pos /\ table[kk] # empty
                => abs(table[kk]) # abs(fp[self])
@@ -3329,7 +3423,14 @@ LEMMA CasFreshnessInsrtToCas ==
                pc'[s2] \in {"nestedIns", "set"} /\ lo'[s2] # empty
                => abs(lo'[s2]) # abs(fp'[w])
         (*******************************************************************)
-        (* Clause (iii): still couples concurrent sorters to `insrt'.   *)
+        (* Clause (iii) at `w = self' transitioning into `cas': we need    *)
+        (* `abs(lo[s2]) # abs(fp[self])' for every concurrent sorter `s2'. *)
+        (* `SortPermInv' (b) at `s2' only relates `lo[s2]' to non-gap      *)
+        (* table cells, not to `fp[self]'.  An auxiliary invariant of the *)
+        (* form `\A s2, w : pc[s2] \in {nestedIns,set} /\ pc[w] \in        *)
+        (* {insrt,cas} => abs(lo[s2]) # abs(fp[w])' is required; this is  *)
+        (* the same strengthening needed for the deep race sub-cases of   *)
+        (* `CasFreshnessEvictStep'.                                        *)
         (*******************************************************************)
         OMITTED
       <3>. QED  BY <3>1, <3>5, <3>6, <3>7a, <3>8, <2>2
@@ -3421,7 +3522,18 @@ LEMMA CasFreshnessCasSuccess ==
     (***********************************************************************)
     (* Preservation for other writers' `cas' poses uses the same case split *)
     (* as `SortPermInd' on successful `cas': compare `idx(fp[w])' with the *)
-    (* modified cell `pos'.  Kept concise here via `OMITTED'.               *)
+    (* modified cell `pos'.                                                  *)
+    (*                                                                       *)
+    (* The proof goes through cleanly in all sub-cases except                *)
+    (* `abs(fp[self]) = abs(fp[w])' (two writers inserting the same          *)
+    (* fingerprint at different probe slots).  Eliminating that race        *)
+    (* requires an auxiliary "single-writer-per-fingerprint" invariant      *)
+    (* that is outside the present `CasFreshness'.  Concretely: pre-state, *)
+    (* both `w1' and `w2' may sit at "cas" with `fp[w1] = fp[w2] = f', no   *)
+    (* table cell has `abs = f' yet (by `CasProbeUniqueAbsFp' both          *)
+    (* writers), and `idx(f, index[w1]) # idx(f, index[w2])'.  After `w1'  *)
+    (* CASes `f' into `idx(f, index[w1])', `CasProbeUniqueAbsFp'' at `w2'  *)
+    (* is violated at that cell.                                            *)
     (***********************************************************************)
     OMITTED
   <1>. QED  BY <1>4, <1>5 DEF CasFreshness
@@ -3538,11 +3650,908 @@ LEMMA CasFreshnessEvictStep ==
       <3>. QED  BY <3>4, <3>5, <3>6
     <2>. QED  BY <2>6, <2>7 DEF CasFreshness
   <1>2. CASE nestedIns(self)
-    OMITTED
+    (*********************************************************************)
+    (* `nestedIns(self)' either leaves `table' UNCHANGED (compare > -1)  *)
+    (* or copies `table[mod(ej[self], K)]' into the gap                   *)
+    (* `mod(ej[self] + 1, K)'.  The latter creates a transient duplicate *)
+    (* of the source cell at the gap; `CasProbeUniqueAbsFp'' may be       *)
+    (* violated at the gap when a concurrent writer's probe slot         *)
+    (* coincides with the source cell - that finer race-correctness      *)
+    (* claim requires an additional invariant beyond the present         *)
+    (* `CasFreshness'.                                                    *)
+    (*********************************************************************)
+    <2>. USE <1>2 DEF nestedIns
+    <2>0. pc[self] = "nestedIns"
+      OBVIOUS
+    <2>1. UNCHANGED << fp, index, expected, lo, ei, history, stack,
+                       external, newexternal, evict, waitCnt, result >>
+      OBVIOUS
+    <2>2. \A w \in Writer :
+             w # self => /\ pc'[w] = pc[w]
+                         /\ fp'[w] = fp[w]
+                         /\ index'[w] = index[w]
+                         /\ expected'[w] = expected[w]
+                         /\ lo'[w] = lo[w]
+      OBVIOUS
+    <2>3. pc'[self] \in {"nestedIns", "set"}
+      OBVIOUS
+    <2>4. pc'[self] \notin {"insrt", "cas"}
+      BY <2>3
+    <2>Muex. \A s2 \in Writer :
+                s2 # self => pc[s2] \notin {"nestedIns", "set"}
+      <3>. SUFFICES ASSUME NEW s2 \in Writer, s2 # self,
+                           pc[s2] \in {"nestedIns", "set"}
+                    PROVE  FALSE
+        OBVIOUS
+      <3>1. pc[self] \in EvictUnion
+        BY <2>0
+      <3>2. pc[s2] \in EvictUnion
+        OBVIOUS
+      <3>. QED  BY <3>1, <3>2
+    <2>A. CASE compare(lo[self], mod(ei[self] + 1, K),
+                        table[mod(ej[self], K)], mod(ej[self], K)) <= -1
+      (* THEN branch: `table'[gap] := table[mod(ej[self], K)]'. *)
+      <3>1. table' = [table EXCEPT
+                        ![mod(ej[self] + 1, K)] = table[mod(ej[self], K)]]
+        BY <2>A
+      <3>2. ej[self] \in Int
+        OBVIOUS
+      <3>3. K \in Nat \ {0}
+        BY OAAssumption
+      <3>Gap. mod(ej[self] + 1, K) \in 1..K
+        <4>1. ej[self] + 1 \in Int
+          BY <3>2
+        <4>2. (ej[self] + 1) % K \in 0..(K-1)
+          BY <4>1, <3>3
+        <4>A. CASE (ej[self] + 1) % K = 0
+          <5>1. mod(ej[self] + 1, K) = K
+            BY <4>A DEF mod
+          <5>. QED  BY <5>1, <3>3
+        <4>B. CASE (ej[self] + 1) % K # 0
+          <5>1. mod(ej[self] + 1, K) = (ej[self] + 1) % K
+            BY <4>B DEF mod
+          <5>. QED  BY <5>1, <4>2, <4>B, <3>3
+        <4>. QED  BY <4>A, <4>B
+      <3>6. CasProbeUniqueAbsFp'
+        <4>. SUFFICES ASSUME NEW w \in Writer,
+                             pc'[w] \in {"insrt", "cas"},
+                             NEW k \in 1..K,
+                             /\ table'[k] # empty
+                             /\ abs(table'[k]) = abs(fp'[w])
+                      PROVE k = idx(fp'[w], index'[w])
+          BY DEF CasProbeUniqueAbsFp
+        <4>1. w # self
+          BY <2>4
+        <4>2. /\ pc'[w] = pc[w]
+              /\ fp'[w] = fp[w]
+              /\ index'[w] = index[w]
+          BY <4>1, <2>2
+        <4>3. pc[w] \in {"insrt", "cas"}
+          BY <4>2
+        <4>A1. CASE k # mod(ej[self] + 1, K)
+          <5>1. table'[k] = table[k]
+            BY <3>1, <4>A1, <3>Gap
+          <5>2. /\ table[k] # empty
+                /\ abs(table[k]) = abs(fp[w])
+            BY <5>1, <4>2
+          <5>3. k = idx(fp[w], index[w])
+            BY <5>2, <4>3 DEF CasFreshness, CasProbeUniqueAbsFp
+          <5>. QED  BY <5>3, <4>2
+        <4>A2. CASE k = mod(ej[self] + 1, K)
+          (***************************************************************)
+          (* Sub-case: the copied value at the gap could collide with    *)
+          (* `abs(fp[w])'.  As shown in the doc-comment above, closing   *)
+          (* this case requires an invariant strengthening that is       *)
+          (* outside the current `CasFreshness' scope.                   *)
+          (***************************************************************)
+          OMITTED
+        <4>. QED  BY <4>A1, <4>A2
+      <3>7. CasFreshnessCore'
+        <4>. SUFFICES ASSUME NEW w \in Writer,
+                             pc'[w] = "cas",
+                             table'[idx(fp'[w], index'[w])] = expected'[w]
+                      PROVE  /\ idx(fp'[w], index'[w]) \in 1..K
+                            /\ \A kk \in 1..K :
+                                 kk # idx(fp'[w], index'[w])
+                                 /\ table'[kk] # empty
+                                 => abs(table'[kk]) # abs(fp'[w])
+                            /\ \A s2 \in Writer :
+                                 pc'[s2] \in {"nestedIns", "set"}
+                                 /\ lo'[s2] # empty
+                                 => abs(lo'[s2]) # abs(fp'[w])
+          (* TLAPS times out on the SUFFICES => CasFreshnessCore' *)
+          (* transformation at this proof depth.                  *)
+          OMITTED
+        <4>1. w # self
+          BY <2>4
+        <4>2. /\ pc'[w] = pc[w]
+              /\ fp'[w] = fp[w]
+              /\ index'[w] = index[w]
+              /\ expected'[w] = expected[w]
+          BY <4>1, <2>2
+        <4>3. pc[w] = "cas"
+          BY <4>2
+        <4>5. ASSUME NEW s2 \in Writer,
+                     pc'[s2] \in {"nestedIns", "set"},
+                     lo'[s2] # empty
+              PROVE  abs(lo'[s2]) # abs(fp'[w])
+          (* Clause (iii): only `self' can be at "nestedIns"/"set"      *)
+          (* post.  When the pre cas-success guard holds at `w', the    *)
+          (* required disjointness is given by `CasFreshnessCore' pre.  *)
+          (* The case where the pre-state cas-success guard fails       *)
+          (* requires the same strengthening as <4>A2 above.            *)
+          <5>1. CASE s2 # self
+            <6>1. pc'[s2] = pc[s2]
+              BY <5>1, <2>2
+            <6>2. pc[s2] \in {"nestedIns", "set"}
+              BY <6>1, <4>5
+            <6>3. pc[s2] \notin {"nestedIns", "set"}
+              BY <5>1, <2>Muex
+            <6>. QED  BY <6>2, <6>3
+          <5>2. CASE s2 = self
+            <6>1. pc'[self] \in {"nestedIns", "set"}
+              BY <5>2, <4>5
+            <6>2. lo'[self] = lo[self]
+              BY <2>1
+            <6>3. lo[self] # empty
+              BY <5>2, <6>2, <4>5
+            <6>4. pc[self] \in {"nestedIns", "set"}
+              BY <2>0
+            (* Try CasFreshnessCore pre at `w' (requires cas-success). *)
+            <6>5. CASE table[idx(fp[w], index[w])] = expected[w]
+              <7>1. abs(lo[self]) # abs(fp[w])
+                BY <4>3, <6>5, <6>3, <6>4
+                  DEF CasFreshness, CasFreshnessCore
+              <7>. QED  BY <7>1, <6>2, <4>2, <5>2
+            <6>6. CASE table[idx(fp[w], index[w])] # expected[w]
+              (***********************************************************)
+              (* See doc-comment on <4>A2.                                *)
+              (***********************************************************)
+              OMITTED
+            <6>. QED  BY <6>5, <6>6
+          <5>. QED  BY <5>1, <5>2
+        \* (i) and (ii) -- split idx vs. gap.
+        <4>6. \A kk \in 1..K :
+                 kk # idx(fp'[w], index'[w]) /\ table'[kk] # empty
+                 => abs(table'[kk]) # abs(fp'[w])
+          <5>. SUFFICES ASSUME NEW kk \in 1..K,
+                               kk # idx(fp'[w], index'[w]),
+                               table'[kk] # empty
+                        PROVE  abs(table'[kk]) # abs(fp'[w])
+            OBVIOUS
+          <5>1. kk # idx(fp[w], index[w])
+            BY <4>2
+          <5>A. CASE kk # mod(ej[self] + 1, K)
+            <6>1. table'[kk] = table[kk]
+              BY <3>1, <5>A, <3>Gap
+            <6>2. table[kk] # empty
+              BY <6>1
+            <6>3. ASSUME abs(table[kk]) = abs(fp[w]) PROVE FALSE
+              <7>1. pc[w] \in {"insrt", "cas"}
+                BY <4>3
+              <7>2. kk = idx(fp[w], index[w])
+                BY <7>1, <6>2, <6>3 DEF CasFreshness, CasProbeUniqueAbsFp
+              <7>. QED  BY <5>1, <7>2
+            <6>4. abs(table[kk]) # abs(fp[w])
+              BY <6>3
+            <6>5. abs(table'[kk]) # abs(fp'[w])
+              BY <6>1, <6>4, <4>2
+            <6>. QED  BY <6>5
+          <5>B. CASE kk = mod(ej[self] + 1, K)
+            (* Symmetric to <4>A2: the copied cell could collide with    *)
+            (* `abs(fp[w])'.                                              *)
+            OMITTED
+          <5>. QED  BY <5>A, <5>B
+        <4>7. idx(fp'[w], index'[w]) \in 1..K
+          (* Either pre-state cas-success holds at `w' (giving           *)
+          (* `idx \in 1..K' via `CasFreshnessCore' pre), or the changed  *)
+          (* cell is at the gap which is in 1..K.                        *)
+          <5>. DEFINE idx_w == idx(fp[w], index[w])
+          <5>1. idx(fp'[w], index'[w]) = idx_w
+            BY <4>2
+          <5>2. table'[idx(fp'[w], index'[w])] = expected[w]
+            BY <4>2
+          <5>A. CASE table[idx_w] = expected[w]
+            <6>1. pc[w] = "cas" /\ table[idx_w] = expected[w]
+              BY <4>3, <5>A
+            <6>2. idx_w \in 1..K
+              BY <6>1 DEF CasFreshness, CasFreshnessCore
+            <6>. QED  BY <5>1, <6>2
+          <5>B. CASE table[idx_w] # expected[w]
+            (* table' must differ from `table' at idx_w; in nestedIns    *)
+            (* the only differing cell is the gap, so idx_w = gap.       *)
+            OMITTED
+          <5>. QED  BY <5>A, <5>B
+        <4>. QED  BY <4>5, <4>6, <4>7
+      <3>. QED  BY <3>6, <3>7 DEF CasFreshness
+    <2>B. CASE ~(compare(lo[self], mod(ei[self] + 1, K),
+                          table[mod(ej[self], K)], mod(ej[self], K)) <= -1)
+      (* ELSE branch: `table' UNCHANGED. *)
+      <3>1. UNCHANGED <<table, ej>>
+        BY <2>B
+      <3>2. CasProbeUniqueAbsFp'
+        <4>. SUFFICES ASSUME NEW w \in Writer,
+                             pc'[w] \in {"insrt", "cas"},
+                             NEW k \in 1..K,
+                             /\ table'[k] # empty
+                             /\ abs(table'[k]) = abs(fp'[w])
+                      PROVE k = idx(fp'[w], index'[w])
+          BY DEF CasProbeUniqueAbsFp
+        <4>1. w # self
+          BY <2>4
+        <4>2. /\ pc'[w] = pc[w]
+              /\ fp'[w] = fp[w]
+              /\ index'[w] = index[w]
+          BY <4>1, <2>2
+        <4>3. table'[k] = table[k]
+          BY <3>1
+        <4>4. /\ pc[w] \in {"insrt", "cas"}
+              /\ table[k] # empty
+              /\ abs(table[k]) = abs(fp[w])
+          BY <4>2, <4>3
+        <4>5. k = idx(fp[w], index[w])
+          BY <4>4 DEF CasFreshness, CasProbeUniqueAbsFp
+        <4>. QED  BY <4>2, <4>5
+      <3>3. CasFreshnessCore'
+        <4>. SUFFICES
+                ASSUME NEW w \in Writer,
+                       pc'[w] = "cas",
+                       table'[idx(fp'[w], index'[w])] = expected'[w]
+                PROVE  /\ idx(fp'[w], index'[w]) \in 1..K
+                       /\ \A kk \in 1..K :
+                            kk # idx(fp'[w], index'[w])
+                            /\ table'[kk] # empty
+                            => abs(table'[kk]) # abs(fp'[w])
+                       /\ \A s2 \in Writer :
+                            pc'[s2] \in {"nestedIns", "set"}
+                            /\ lo'[s2] # empty
+                            => abs(lo'[s2]) # abs(fp'[w])
+          BY DEF CasFreshnessCore
+        <4>1. w # self
+          BY <2>4
+        <4>2. /\ pc'[w] = pc[w]
+              /\ fp'[w] = fp[w]
+              /\ index'[w] = index[w]
+              /\ expected'[w] = expected[w]
+          BY <4>1, <2>2
+        <4>3. pc[w] = "cas" /\ table[idx(fp[w], index[w])] = expected[w]
+          BY <4>2, <3>1
+        <4>4. ASSUME NEW s2 \in Writer,
+                     pc'[s2] \in {"nestedIns", "set"},
+                     lo'[s2] # empty
+              PROVE  abs(lo'[s2]) # abs(fp'[w])
+          <5>1. CASE s2 = self
+            <6>1. lo'[self] = lo[self]
+              BY <2>1
+            <6>2. pc[self] \in {"nestedIns", "set"}
+              BY <2>0
+            <6>3. lo[self] # empty
+              BY <6>1, <5>1, <4>4
+            <6>4. abs(lo[self]) # abs(fp[w])
+              BY <4>3, <6>2, <6>3
+                DEF CasFreshness, CasFreshnessCore
+            <6>. QED  BY <6>1, <6>4, <4>2, <5>1
+          <5>2. CASE s2 # self
+            <6>1. /\ pc'[s2] = pc[s2]
+                  /\ lo'[s2] = lo[s2]
+              BY <5>2, <2>2
+            <6>2. pc[s2] \in {"nestedIns", "set"}
+              BY <6>1, <4>4
+            <6>3. pc[s2] \notin {"nestedIns", "set"}
+              BY <5>2, <2>Muex
+            <6>. QED  BY <6>2, <6>3
+          <5>. QED  BY <5>1, <5>2
+        <4>5. \A kk \in 1..K :
+                 kk # idx(fp'[w], index'[w]) /\ table'[kk] # empty
+                 => abs(table'[kk]) # abs(fp'[w])
+          BY <4>3, <4>2, <3>1 DEF CasFreshness, CasFreshnessCore
+        <4>6. idx(fp'[w], index'[w]) \in 1..K
+          BY <4>3, <4>2, <3>1 DEF CasFreshness, CasFreshnessCore
+        <4>. QED  BY <4>4, <4>5, <4>6
+      <3>. QED  BY <3>2, <3>3 DEF CasFreshness
+    <2>. QED  BY <2>A, <2>B
   <1>3. CASE set(self)
-    OMITTED
+    (*********************************************************************)
+    (* `set(self)' writes `lo[self]' into the gap `mod(ej[self] + 1, K)' *)
+    (* and advances `ei', `ej', `pc' to a fresh insertion-sort step.     *)
+    (* `EvictExclusive' makes clause (iii) of `CasFreshnessCore'' vacuous *)
+    (* post-state.  For `CasProbeUniqueAbsFp'' at the new cell, the deep *)
+    (* race-correctness sub-case (where the gap coincides with another  *)
+    (* writer's probe slot in an out-of-table-history state) is OMITTED. *)
+    (*********************************************************************)
+    <2>. USE <1>3 DEF set
+    <2>0. pc[self] = "set"
+      OBVIOUS
+    <2>1. UNCHANGED << fp, index, expected, lo, history, stack,
+                       external, newexternal, evict, waitCnt, result >>
+      OBVIOUS
+    <2>2. \A w \in Writer :
+             w # self => /\ pc'[w] = pc[w]
+                         /\ fp'[w] = fp[w]
+                         /\ index'[w] = index[w]
+                         /\ expected'[w] = expected[w]
+                         /\ lo'[w] = lo[w]
+      OBVIOUS
+    <2>3. pc'[self] = "strIns"
+      OBVIOUS
+    <2>4. pc'[self] \notin {"insrt", "cas"}
+      BY <2>3
+    <2>5. pc'[self] \notin {"nestedIns", "set"}
+      BY <2>3
+    <2>Muex. \A s2 \in Writer :
+                s2 # self => pc[s2] \notin {"nestedIns", "set"}
+      <3>. SUFFICES ASSUME NEW s2 \in Writer, s2 # self,
+                           pc[s2] \in {"nestedIns", "set"}
+                    PROVE  FALSE
+        OBVIOUS
+      <3>1. pc[self] \in EvictUnion
+        BY <2>0
+      <3>2. pc[s2] \in EvictUnion
+        OBVIOUS
+      <3>. QED  BY <3>1, <3>2
+    <2>Tab. table' = [table EXCEPT ![mod(ej[self] + 1, K)] = lo[self]]
+      OBVIOUS
+    <2>Gap. mod(ej[self] + 1, K) \in 1..K
+      <3>1. ej[self] \in Int
+        OBVIOUS
+      <3>2. ej[self] + 1 \in Int
+        BY <3>1
+      <3>3. K \in Nat \ {0}
+        BY OAAssumption
+      <3>4. (ej[self] + 1) % K \in 0..(K-1)
+        BY <3>2, <3>3
+      <3>A. CASE (ej[self] + 1) % K = 0
+        <4>1. mod(ej[self] + 1, K) = K
+          BY <3>A DEF mod
+        <4>. QED  BY <4>1, <3>3
+      <3>B. CASE (ej[self] + 1) % K # 0
+        <4>1. mod(ej[self] + 1, K) = (ej[self] + 1) % K
+          BY <3>B DEF mod
+        <4>. QED  BY <4>1, <3>4, <3>B, <3>3
+      <3>. QED  BY <3>A, <3>B
+    <2>6. CasProbeUniqueAbsFp'
+      <3>. SUFFICES ASSUME NEW w \in Writer,
+                           pc'[w] \in {"insrt", "cas"},
+                           NEW k \in 1..K,
+                           /\ table'[k] # empty
+                           /\ abs(table'[k]) = abs(fp'[w])
+                    PROVE k = idx(fp'[w], index'[w])
+        BY DEF CasProbeUniqueAbsFp
+      <3>1. w # self
+        BY <2>4
+      <3>2. /\ pc'[w] = pc[w]
+            /\ fp'[w] = fp[w]
+            /\ index'[w] = index[w]
+        BY <3>1, <2>2
+      <3>3. pc[w] \in {"insrt", "cas"}
+        BY <3>2
+      <3>A. CASE k # mod(ej[self] + 1, K)
+        <4>1. table'[k] = table[k]
+          BY <2>Tab, <3>A, <2>Gap
+        <4>2. /\ table[k] # empty
+              /\ abs(table[k]) = abs(fp[w])
+          BY <4>1, <3>2
+        <4>3. k = idx(fp[w], index[w])
+          BY <4>2, <3>3 DEF CasFreshness, CasProbeUniqueAbsFp
+        <4>. QED  BY <4>3, <3>2
+      <3>B. CASE k = mod(ej[self] + 1, K)
+        (* The gap-cell now holds `lo[self]'; deep race-correctness *)
+        (* sub-case as discussed in the doc-comment above.          *)
+        OMITTED
+      <3>. QED  BY <3>A, <3>B
+    <2>7. CasFreshnessCore'
+      <3>. SUFFICES ASSUME NEW w \in Writer,
+                           pc'[w] = "cas",
+                           table'[idx(fp'[w], index'[w])] = expected'[w]
+                    PROVE  /\ idx(fp'[w], index'[w]) \in 1..K
+                          /\ \A kk \in 1..K :
+                               kk # idx(fp'[w], index'[w])
+                               /\ table'[kk] # empty
+                               => abs(table'[kk]) # abs(fp'[w])
+                          /\ \A s2 \in Writer :
+                               pc'[s2] \in {"nestedIns", "set"}
+                               /\ lo'[s2] # empty
+                               => abs(lo'[s2]) # abs(fp'[w])
+        BY DEF CasFreshnessCore
+      <3>1. w # self
+        BY <2>4
+      <3>2. /\ pc'[w] = pc[w]
+            /\ fp'[w] = fp[w]
+            /\ index'[w] = index[w]
+            /\ expected'[w] = expected[w]
+        BY <3>1, <2>2
+      <3>3. pc[w] = "cas"
+        BY <3>2
+      (* Clause (iii): vacuous, by EvictExclusive. *)
+      <3>4. \A s2 \in Writer :
+               pc'[s2] \in {"nestedIns", "set"} /\ lo'[s2] # empty
+               => abs(lo'[s2]) # abs(fp'[w])
+        <4>. SUFFICES ASSUME NEW s2 \in Writer,
+                             pc'[s2] \in {"nestedIns", "set"},
+                             lo'[s2] # empty
+                      PROVE  abs(lo'[s2]) # abs(fp'[w])
+          OBVIOUS
+        <4>1. CASE s2 = self
+          BY <4>1, <2>5
+        <4>2. CASE s2 # self
+          <5>1. pc'[s2] = pc[s2]
+            BY <4>2, <2>2
+          <5>2. pc[s2] \in {"nestedIns", "set"}
+            BY <5>1
+          <5>3. pc[s2] \notin {"nestedIns", "set"}
+            BY <4>2, <2>Muex
+          <5>. QED  BY <5>2, <5>3
+        <4>. QED  BY <4>1, <4>2
+      \* (i) and (ii): split idx vs. gap.
+      <3>5. \A kk \in 1..K :
+               kk # idx(fp'[w], index'[w]) /\ table'[kk] # empty
+               => abs(table'[kk]) # abs(fp'[w])
+        <4>. SUFFICES ASSUME NEW kk \in 1..K,
+                             kk # idx(fp'[w], index'[w]),
+                             table'[kk] # empty
+                      PROVE  abs(table'[kk]) # abs(fp'[w])
+          OBVIOUS
+        <4>1. kk # idx(fp[w], index[w])
+          BY <3>2
+        <4>A. CASE kk # mod(ej[self] + 1, K)
+          <5>1. table'[kk] = table[kk]
+            BY <2>Tab, <4>A, <2>Gap
+          <5>2. table[kk] # empty
+            BY <5>1
+          <5>3. ASSUME abs(table[kk]) = abs(fp[w]) PROVE FALSE
+            <6>1. pc[w] \in {"insrt", "cas"}
+              BY <3>3
+            <6>2. kk = idx(fp[w], index[w])
+              BY <6>1, <5>2, <5>3 DEF CasFreshness, CasProbeUniqueAbsFp
+            <6>. QED  BY <4>1, <6>2
+          <5>4. abs(table[kk]) # abs(fp[w])
+            BY <5>3
+          <5>5. abs(table'[kk]) # abs(fp'[w])
+            BY <5>1, <5>4, <3>2
+          <5>. QED  BY <5>5
+        <4>B. CASE kk = mod(ej[self] + 1, K)
+          (* See <3>B doc-comment.                                     *)
+          OMITTED
+        <4>. QED  BY <4>A, <4>B
+      <3>6. idx(fp'[w], index'[w]) \in 1..K
+        <4>. DEFINE idx_w == idx(fp[w], index[w])
+        <4>1. idx(fp'[w], index'[w]) = idx_w
+          BY <3>2
+        <4>A. CASE table[idx_w] = expected[w]
+          <5>1. pc[w] = "cas" /\ table[idx_w] = expected[w]
+            BY <3>3, <4>A
+          <5>2. idx_w \in 1..K
+            BY <5>1 DEF CasFreshness, CasFreshnessCore
+          <5>. QED  BY <4>1, <5>2
+        <4>B. CASE table[idx_w] # expected[w]
+          (* table' differs from table at idx_w; in `set' the only      *)
+          (* differing cell is the gap, so idx_w = gap.  Requires the  *)
+          (* same care as the `<5>B' branch of `flush'.                *)
+          OMITTED
+        <4>. QED  BY <4>A, <4>B
+      <3>. QED  BY <3>4, <3>5, <3>6
+    <2>. QED  BY <2>6, <2>7 DEF CasFreshness
   <1>4. CASE flush(self)
-    OMITTED
+    (*********************************************************************)
+    (* `flush(self)' either negates one table cell in place (inner-THEN  *)
+    (* sub-branch of outer-THEN) or leaves `table' UNCHANGED (inner-ELSE *)
+    (* and outer-ELSE).  Negation preserves `abs(.)' and `# empty', so   *)
+    (* every probe-uniqueness witness carries over from pre-state.  No   *)
+    (* sorter is concurrently at `nestedIns'/`set' by `EvictExclusive',  *)
+    (* so clause (iii) of `CasFreshnessCore'' is vacuous.                *)
+    (*********************************************************************)
+    <2>. USE <1>4 DEF flush
+    <2>0. pc[self] = "flush"
+      OBVIOUS
+    <2>1. UNCHANGED << fp, index, expected, history, ej, stack,
+                       evict, waitCnt, result >>
+      OBVIOUS
+    <2>2. \A w \in Writer :
+             w # self => /\ pc'[w] = pc[w]
+                         /\ fp'[w] = fp[w]
+                         /\ index'[w] = index[w]
+                         /\ expected'[w] = expected[w]
+                         /\ lo'[w] = lo[w]
+      OBVIOUS
+    <2>3. pc'[self] \in {"flush", "rtrn"}
+      OBVIOUS
+    <2>4. pc'[self] \notin {"insrt", "cas"}
+      BY <2>3
+    <2>5. pc'[self] \notin {"nestedIns", "set"}
+      BY <2>3
+    (* By EvictExclusive, no other writer is in EvictUnion. *)
+    <2>Muex. \A s2 \in Writer :
+                s2 # self => pc[s2] \notin {"nestedIns", "set"}
+      <3>. SUFFICES ASSUME NEW s2 \in Writer, s2 # self,
+                           pc[s2] \in {"nestedIns", "set"}
+                    PROVE  FALSE
+        OBVIOUS
+      <3>1. pc[self] \in EvictUnion
+        BY <2>0
+      <3>2. pc[s2] \in EvictUnion
+        OBVIOUS
+      <3>. QED  BY <3>1, <3>2
+    (* The arithmetic fact `mod(ei[self], K) \in 1..K' that pins the
+       only cell flush might modify. *)
+    <2>EiNat. ei[self] \in Nat
+      OBVIOUS
+    <2>K. K \in Nat \ {0}
+      BY OAAssumption
+    <2>ModEi. mod(ei[self], K) \in 1..K
+      <3>1. ei[self] % K \in 0..(K-1)
+        BY <2>EiNat, <2>K
+      <3>A. CASE ei[self] % K = 0
+        <4>1. mod(ei[self], K) = K
+          BY <3>A DEF mod
+        <4>2. K \in 1..K
+          BY <2>K
+        <4>. QED  BY <4>1, <4>2
+      <3>B. CASE ei[self] % K # 0
+        <4>1. mod(ei[self], K) = ei[self] % K
+          BY <3>B DEF mod
+        <4>2. ei[self] % K \in 1..K
+          BY <3>1, <3>B, <2>K
+        <4>. QED  BY <4>1, <4>2
+      <3>. QED  BY <3>A, <3>B
+    (* DOMAIN table = 1..K (TableType) used implicitly via DupInv. *)
+    <2>Dom. DOMAIN table = 1..K
+      OBVIOUS
+    (* `flush' only mutates `table[mod(ei[self], K)]'. *)
+    <2>Tab1. \A k \in 1..K :
+                k # mod(ei[self], K) => table'[k] = table[k]
+      <3>. SUFFICES ASSUME NEW k \in 1..K, k # mod(ei[self], K)
+                    PROVE  table'[k] = table[k]
+        OBVIOUS
+      <3>A. CASE ei[self] <= K+L
+        <4>A1. CASE lo'[self] # empty /\
+                    lo'[self] > largestElem(newexternal) /\
+                    ((ei[self] <= K /\ ~wrapped(lo'[self],ei[self])) \/
+                     (ei[self] > K /\ wrapped(lo'[self],ei[self])))
+          BY <3>A, <4>A1
+        <4>A2. CASE ~(lo'[self] # empty /\
+                       lo'[self] > largestElem(newexternal) /\
+                       ((ei[self] <= K /\ ~wrapped(lo'[self],ei[self])) \/
+                        (ei[self] > K /\ wrapped(lo'[self],ei[self]))))
+          BY <3>A, <4>A2
+        <4>. QED  BY <4>A1, <4>A2
+      <3>B. CASE ~(ei[self] <= K+L)
+        BY <3>B
+      <3>. QED  BY <3>A, <3>B
+    (* Abs-preservation at `mod(ei,K)' under the inner-THEN negation. *)
+    <2>Tab2. table[mod(ei[self], K)] # empty =>
+                /\ table'[mod(ei[self], K)] # empty
+                /\ abs(table'[mod(ei[self], K)]) = abs(table[mod(ei[self], K)])
+      <3>. SUFFICES ASSUME table[mod(ei[self], K)] # empty
+                    PROVE  /\ table'[mod(ei[self], K)] # empty
+                           /\ abs(table'[mod(ei[self], K)])
+                                = abs(table[mod(ei[self], K)])
+        OBVIOUS
+      <3>0. table \in [1..K -> TableValues]
+        OBVIOUS
+      <3>0a. table[mod(ei[self], K)] \in TableValues
+        BY <3>0, <2>ModEi
+      <3>0b. table[mod(ei[self], K)] \in Int
+        BY <3>0a, OAAssumption DEF TableValues, NegFps
+      <3>A. CASE ei[self] <= K+L
+        <4>A1. CASE lo'[self] # empty /\
+                    lo'[self] > largestElem(newexternal) /\
+                    ((ei[self] <= K /\ ~wrapped(lo'[self],ei[self])) \/
+                     (ei[self] > K /\ wrapped(lo'[self],ei[self])))
+          <5>1. lo' = [lo EXCEPT ![self] = table[mod(ei[self], K)]]
+            BY <3>A
+          <5>2. lo'[self] = table[mod(ei[self], K)]
+            BY <5>1, ProcSetIsWriter
+          <5>3. table' = [table EXCEPT ![mod(ei[self], K)]
+                            = lo'[self] * (-1)]
+            BY <3>A, <4>A1
+          <5>4. table'[mod(ei[self], K)] = lo'[self] * (-1)
+            BY <5>3, <2>ModEi
+          (* Arithmetic abs-preservation under negation.  TLAPS' SMT *)
+          (* backend reliably handles this with the integer typing.   *)
+          <5>5. /\ table'[mod(ei[self], K)] \in Int
+                /\ abs(table'[mod(ei[self], K)])
+                     = abs(table[mod(ei[self], K)])
+            <6>1. table[mod(ei[self], K)] \in Int
+              BY <3>0b
+            <6>2. lo'[self] = table[mod(ei[self], K)]
+              BY <5>2
+            <6>3. lo'[self] \in Int
+              BY <6>1, <6>2
+            <6>4. lo'[self] * (-1) \in Int
+              BY <6>3
+            <6>5. table'[mod(ei[self], K)] \in Int
+              BY <5>4, <6>4
+            <6>6. lo'[self] * (-1) = -lo'[self]
+              BY <6>3
+            <6>7. abs(lo'[self] * (-1)) = abs(lo'[self])
+              (* abs(-v) = abs(v) for v \in Int.  Manual case split. *)
+              <7>A. CASE lo'[self] >= 0
+                <8>1. -lo'[self] <= 0
+                  BY <6>3, <7>A
+                <8>A. CASE lo'[self] = 0
+                  <9>1. -lo'[self] = 0
+                    BY <8>A
+                  <9>2. abs(lo'[self]) = 0
+                    BY <8>A, <6>3 DEF abs
+                  <9>3. abs(lo'[self] * (-1)) = abs(0)
+                    BY <6>6, <9>1
+                  <9>4. abs(0) = 0
+                    BY DEF abs
+                  <9>. QED  BY <9>2, <9>3, <9>4
+                <8>B. CASE lo'[self] > 0
+                  <9>1. ~(lo'[self] < 0)
+                    BY <8>B, <6>3
+                  <9>2. abs(lo'[self]) = lo'[self]
+                    BY <9>1, <6>3 DEF abs
+                  <9>3. -lo'[self] < 0
+                    BY <8>B, <6>3
+                  <9>4. abs(-lo'[self]) = -1 * (-lo'[self])
+                    BY <9>3, <6>3 DEF abs
+                  <9>5. -1 * (-lo'[self]) = lo'[self]
+                    BY <6>3
+                  <9>6. abs(-lo'[self]) = lo'[self]
+                    BY <9>4, <9>5
+                  <9>7. abs(lo'[self] * (-1)) = abs(-lo'[self])
+                    BY <6>6
+                  <9>. QED  BY <9>2, <9>6, <9>7
+                <8>. QED  BY <7>A, <8>A, <8>B
+              <7>B. CASE lo'[self] < 0
+                <8>1. abs(lo'[self]) = -1 * lo'[self]
+                  BY <7>B, <6>3 DEF abs
+                <8>2. -lo'[self] > 0
+                  BY <7>B, <6>3
+                <8>3. ~(-lo'[self] < 0)
+                  BY <8>2, <6>3
+                <8>4. abs(-lo'[self]) = -lo'[self]
+                  BY <8>3, <6>3 DEF abs
+                <8>5. -lo'[self] = -1 * lo'[self]
+                  BY <6>3
+                <8>6. abs(-lo'[self]) = -1 * lo'[self]
+                  BY <8>4, <8>5
+                <8>7. abs(lo'[self] * (-1)) = abs(-lo'[self])
+                  BY <6>6
+                <8>. QED  BY <8>1, <8>6, <8>7
+              <7>. QED  BY <6>3, <7>A, <7>B
+            <6>8. abs(table'[mod(ei[self], K)]) = abs(lo'[self])
+              BY <5>4, <6>7
+            <6>9. abs(lo'[self]) = abs(table[mod(ei[self], K)])
+              BY <6>2
+            <6>. QED  BY <6>5, <6>8, <6>9
+          <5>8. table'[mod(ei[self], K)] # empty
+            BY <5>5, EmptyNotInt
+          <5>. QED  BY <5>5, <5>8
+        <4>A2. CASE ~(lo'[self] # empty /\
+                       lo'[self] > largestElem(newexternal) /\
+                       ((ei[self] <= K /\ ~wrapped(lo'[self],ei[self])) \/
+                        (ei[self] > K /\ wrapped(lo'[self],ei[self]))))
+          <5>1. UNCHANGED <<table, newexternal>>
+            BY <3>A, <4>A2
+          <5>. QED  BY <5>1
+        <4>. QED  BY <4>A1, <4>A2
+      <3>B. CASE ~(ei[self] <= K+L)
+        <4>1. table' = table
+          BY <3>B
+        <4>. QED  BY <4>1
+      <3>. QED  BY <3>A, <3>B
+    (* Two combined lemmas about table' and pre-state table. *)
+    <2>Tab3. \A k \in 1..K : table'[k] # empty =>
+                /\ table[k] # empty
+                /\ abs(table'[k]) = abs(table[k])
+      <3>. SUFFICES ASSUME NEW k \in 1..K, table'[k] # empty
+                    PROVE  /\ table[k] # empty
+                           /\ abs(table'[k]) = abs(table[k])
+        OBVIOUS
+      <3>A. CASE k # mod(ei[self], K)
+        <4>1. table'[k] = table[k]
+          BY <2>Tab1, <3>A
+        <4>. QED  BY <4>1
+      <3>B. CASE k = mod(ei[self], K)
+        (* In the inner-THEN branch, `table[k] = lo'[self] # empty'. *)
+        <4>A. CASE ei[self] <= K+L /\
+                    (lo'[self] # empty /\
+                     lo'[self] > largestElem(newexternal) /\
+                     ((ei[self] <= K /\ ~wrapped(lo'[self],ei[self])) \/
+                      (ei[self] > K /\ wrapped(lo'[self],ei[self]))))
+          <5>1. lo' = [lo EXCEPT ![self] = table[mod(ei[self], K)]]
+            BY <4>A
+          <5>2. lo'[self] = table[mod(ei[self], K)]
+            BY <5>1, ProcSetIsWriter
+          <5>3. table[k] = lo'[self]
+            BY <5>2, <3>B
+          <5>4. lo'[self] # empty
+            BY <4>A
+          <5>5. table[k] # empty
+            BY <5>3, <5>4
+          <5>. QED  BY <5>5, <2>Tab2, <3>B
+        <4>B. CASE ~(ei[self] <= K+L /\
+                     (lo'[self] # empty /\
+                      lo'[self] > largestElem(newexternal) /\
+                      ((ei[self] <= K /\ ~wrapped(lo'[self],ei[self])) \/
+                       (ei[self] > K /\ wrapped(lo'[self],ei[self])))))
+          (* In all other branches, `table' = table'. *)
+          <5>1. UNCHANGED table \/
+                (ei[self] <= K+L /\ UNCHANGED <<table, newexternal>>)
+            BY <4>B
+          <5>2. table'[k] = table[k]
+            BY <5>1
+          <5>3. table[k] # empty
+            BY <5>2
+          <5>4. abs(table'[k]) = abs(table[k])
+            BY <5>2
+          <5>. QED  BY <5>3, <5>4
+        <4>. QED  BY <4>A, <4>B
+      <3>. QED  BY <3>A, <3>B
+    (* Now discharge `CasProbeUniqueAbsFp'' via abs-preservation. *)
+    <2>6. CasProbeUniqueAbsFp'
+      <3>. SUFFICES ASSUME NEW w \in Writer,
+                           pc'[w] \in {"insrt", "cas"},
+                           NEW k \in 1..K,
+                           /\ table'[k] # empty
+                           /\ abs(table'[k]) = abs(fp'[w])
+                    PROVE k = idx(fp'[w], index'[w])
+        BY DEF CasProbeUniqueAbsFp
+      <3>1. w # self
+        BY <2>4
+      <3>2. /\ pc'[w] = pc[w]
+            /\ fp'[w] = fp[w]
+            /\ index'[w] = index[w]
+        BY <3>1, <2>2
+      <3>3. /\ table[k] # empty
+            /\ abs(table'[k]) = abs(table[k])
+        BY <2>Tab3
+      <3>4. abs(table[k]) = abs(fp[w])
+        BY <3>3, <3>2
+      <3>5. pc[w] \in {"insrt", "cas"}
+        BY <3>2
+      <3>6. k = idx(fp[w], index[w])
+        BY <3>3, <3>4, <3>5 DEF CasFreshness, CasProbeUniqueAbsFp
+      <3>. QED  BY <3>2, <3>6
+    (* CasFreshnessCore': split into the `idx = mod(ei, K)' / `idx #'
+       sub-cases for the (i) clause; clauses (ii)/(iii) follow from
+       abs-preservation and `EvictExclusive'. *)
+    <2>7. CasFreshnessCore'
+      <3>. SUFFICES ASSUME NEW w \in Writer,
+                           pc'[w] = "cas",
+                           table'[idx(fp'[w], index'[w])] = expected'[w]
+                    PROVE  /\ idx(fp'[w], index'[w]) \in 1..K
+                          /\ \A kk \in 1..K :
+                               kk # idx(fp'[w], index'[w])
+                               /\ table'[kk] # empty
+                               => abs(table'[kk]) # abs(fp'[w])
+                          /\ \A s2 \in Writer :
+                               pc'[s2] \in {"nestedIns", "set"}
+                               /\ lo'[s2] # empty
+                               => abs(lo'[s2]) # abs(fp'[w])
+        BY DEF CasFreshnessCore
+      <3>1. w # self
+        BY <2>4
+      <3>2. /\ pc'[w] = pc[w]
+            /\ fp'[w] = fp[w]
+            /\ index'[w] = index[w]
+            /\ expected'[w] = expected[w]
+        BY <3>1, <2>2
+      <3>3. pc[w] = "cas"
+        BY <3>2
+      (* Clause (iii): vacuous, by EvictExclusive. *)
+      <3>4. \A s2 \in Writer :
+               pc'[s2] \in {"nestedIns", "set"} /\ lo'[s2] # empty
+               => abs(lo'[s2]) # abs(fp'[w])
+        <4>. SUFFICES ASSUME NEW s2 \in Writer,
+                             pc'[s2] \in {"nestedIns", "set"},
+                             lo'[s2] # empty
+                      PROVE  abs(lo'[s2]) # abs(fp'[w])
+          OBVIOUS
+        <4>1. CASE s2 = self
+          BY <4>1, <2>5
+        <4>2. CASE s2 # self
+          <5>1. pc'[s2] = pc[s2]
+            BY <4>2, <2>2
+          <5>2. pc[s2] \in {"nestedIns", "set"}
+            BY <5>1
+          <5>3. pc[s2] \notin {"nestedIns", "set"}
+            BY <4>2, <2>Muex
+          <5>. QED  BY <5>2, <5>3
+        <4>. QED  BY <4>1, <4>2
+      (* Clause (ii): abs-preservation + pre-state CasProbeUniqueAbsFp at w. *)
+      <3>5. \A kk \in 1..K :
+               kk # idx(fp'[w], index'[w]) /\ table'[kk] # empty
+               => abs(table'[kk]) # abs(fp'[w])
+        <4>. SUFFICES ASSUME NEW kk \in 1..K,
+                             kk # idx(fp'[w], index'[w]),
+                             table'[kk] # empty
+                      PROVE  abs(table'[kk]) # abs(fp'[w])
+          OBVIOUS
+        <4>1. /\ table[kk] # empty
+              /\ abs(table'[kk]) = abs(table[kk])
+          BY <2>Tab3
+        <4>2. kk # idx(fp[w], index[w])
+          BY <3>2
+        <4>3. ASSUME abs(table[kk]) = abs(fp[w]) PROVE FALSE
+          <5>1. pc[w] \in {"insrt", "cas"}
+            BY <3>3
+          <5>2. kk = idx(fp[w], index[w])
+            BY <5>1, <4>1, <4>3 DEF CasFreshness, CasProbeUniqueAbsFp
+          <5>. QED  BY <4>2, <5>2
+        <4>4. abs(table[kk]) # abs(fp[w])
+          BY <4>3
+        <4>5. abs(table'[kk]) # abs(fp'[w])
+          BY <4>1, <4>4, <3>2
+        <4>. QED  BY <4>5
+      (* Clause (i): the post-`idx' is in 1..K. *)
+      <3>6. idx(fp'[w], index'[w]) \in 1..K
+        <4>. DEFINE idx_w == idx(fp[w], index[w])
+        <4>1. idx(fp'[w], index'[w]) = idx_w
+          BY <3>2
+        <4>A. CASE table[idx_w] = expected[w]
+          (* Pre cas-success guard at w holds.  CasFreshnessCore pre fires. *)
+          <5>1. pc[w] = "cas" /\ table[idx_w] = expected[w]
+            BY <3>3, <4>A
+          <5>2. idx_w \in 1..K
+            BY <5>1 DEF CasFreshness, CasFreshnessCore
+          <5>. QED  BY <4>1, <5>2
+        <4>B. CASE table[idx_w] # expected[w]
+          (* Pre cas-success guard fails; table' differs from table at
+             idx_w; since `flush' only changes `table[mod(ei,K)]', we
+             must have `idx_w = mod(ei[self], K) \in 1..K'. *)
+          <5>1. table'[idx_w] = expected[w]
+            BY <4>1, <3>2
+          <5>2. table'[idx_w] # table[idx_w]
+            BY <5>1, <4>B
+          <5>3. idx_w = mod(ei[self], K)
+            (* If idx_w \in 1..K and idx_w # mod(ei,K), then table'[idx_w]
+               = table[idx_w] (by <2>Tab1), contradicting <5>2.  And if
+               idx_w \notin 1..K, the EXCEPT axiom still yields
+               table'[idx_w] = table[idx_w] for the inner-THEN branch
+               (because the EXCEPT predicate `k = mod(ei[self], K)' is
+               false for idx_w outside 1..K), again contradicting <5>2.
+               Hence the EXCEPT clause must apply, forcing
+               `idx_w = mod(ei[self], K)'. *)
+            <6>A. CASE ei[self] <= K+L
+              <7>A1. CASE lo'[self] # empty /\
+                           lo'[self] > largestElem(newexternal) /\
+                           ((ei[self] <= K /\ ~wrapped(lo'[self],ei[self])) \/
+                            (ei[self] > K /\ wrapped(lo'[self],ei[self])))
+                <8>1. table' = [table EXCEPT
+                                  ![mod(ei[self], K)] = lo'[self] * (-1)]
+                  BY <6>A, <7>A1
+                <8>2. ASSUME idx_w # mod(ei[self], K) PROVE FALSE
+                  (* If `idx_w \in 1..K', the EXCEPT axiom gives equality. *)
+                  (* Otherwise, the rest of the proof needs an explicit *)
+                  (* `IndexType' invariant -- see CasFreshnessInd comment. *)
+                  <9>A. CASE idx_w \in 1..K
+                    <10>1. (table')[idx_w] = table[idx_w]
+                      BY <8>1, <8>2, <9>A
+                    <10>. QED  BY <5>2, <10>1
+                  <9>B. CASE idx_w \notin 1..K
+                    (* Out-of-range probe index would force a violation of *)
+                    (* function typing on `table''.  Discharged via the *)
+                    (* hypothesis `table' \in [1..K -> TableValues]'. *)
+                    OMITTED
+                  <9>. QED  BY <9>A, <9>B
+                <8>. QED  BY <8>2
+              <7>A2. CASE ~(lo'[self] # empty /\
+                           lo'[self] > largestElem(newexternal) /\
+                           ((ei[self] <= K /\ ~wrapped(lo'[self],ei[self])) \/
+                            (ei[self] > K /\ wrapped(lo'[self],ei[self]))))
+                <8>1. table' = table
+                  BY <6>A, <7>A2
+                <8>2. FALSE
+                  BY <8>1, <5>2
+                <8>. QED  BY <8>2
+              <7>. QED  BY <7>A1, <7>A2
+            <6>B. CASE ~(ei[self] <= K+L)
+              <7>1. table' = table
+                BY <6>B
+              <7>2. FALSE
+                BY <7>1, <5>2
+              <7>. QED  BY <7>2
+            <6>. QED  BY <6>A, <6>B
+          <5>4. idx_w \in 1..K
+            BY <5>3, <2>ModEi
+          <5>. QED  BY <4>1, <5>4
+        <4>. QED  BY <4>A, <4>B
+      <3>. QED  BY <3>4, <3>5, <3>6
+    <2>. QED  BY <2>6, <2>7 DEF CasFreshness
   <1>5. CASE rtrn(self)
     <2>. USE <1>5 DEF rtrn
     <2>1. /\ table' = table
@@ -3658,12 +4667,48 @@ LEMMA CasFreshnessEvictStep ==
 (* and only touches others' `lo'/pc'/...' at `w # self' as in the lemma.    *)
 (*                                                                           *)
 (* `CasFreshnessCorePrimeInsrtSelf' factors the `CasFreshnessCore'' part of *)
-(* scan-to-`insrt' steps.  Remaining holes: `CasProbeUniqueAbsFp'' at          *)
-(* `w = self' after `chkSnc' / `onSnc' / `isMth' (OMITTED), clause (iii) and  *)
-(* `pos \in 1..K' in `CasFreshnessInsrtToCas' (OMITTED sub-steps), the full   *)
-(* `CasFreshnessCore'' after successful `cas' (OMITTED), and `nestedIns' /    *)
-(* `set' / `flush' in `CasFreshnessEvictStep' (OMITTED).  `strIns' and `rtrn' *)
-(* branches of eviction are fully proved.                                      *)
+(* scan-to-`insrt' steps.  `IdxInRange' / `ModInRange' provide the          *)
+(* arithmetic backbone for `idx(.,.) \in 1..K'.                              *)
+(*                                                                           *)
+(* Status of the open OMITTEDs (`CasFreshnessInd' is not yet fully closed): *)
+(*                                                                           *)
+(*  GROUP A.  Arithmetic helpers (top of file):                             *)
+(*  - `MinInFps' / `MaxInFps' -- one-shot `CHOOSE'-shape lemmas for         *)
+(*    `min(fps) \in fps' / `max(fps) \in fps' when `fps' is non-empty.     *)
+(*    Proof uses `Nat' well-ordering / finite-set machinery.                *)
+(*  - `IdxInRange' -- structurally proved modulo a single `\div'-typing    *)
+(*    obligation (`(K-1) \div (max-min) \in Int' under                      *)
+(*    `max(fps) # min(fps)').                                                *)
+(*                                                                           *)
+(*  GROUP B.  Scan-to-`insrt' "self" cases (CasFreshness{Chk,On,IsMth}     *)
+(*  ToInsrt):                                                                *)
+(*  - `CasProbeUniqueAbsFp'' at `w = self' after `chkSnc' / `onSnc' /        *)
+(*    `isMth' -- requires a "scan geometry" lemma relating the post-state  *)
+(*    probe index to the cell read during the scan.  Still OMITTED.         *)
+(*                                                                           *)
+(*  GROUP C.  `CasFreshnessInsrtToCas':                                     *)
+(*  - `pos \in 1..K' -- mechanised down to `index[self] \in Int', which    *)
+(*    still requires an `IndexType' inductive invariant.                    *)
+(*  - Clause (iii) at `w = self' -- requires extending clause (iii) of      *)
+(*    `CasFreshnessCore' to writers at `insrt' (not just `cas').            *)
+(*                                                                           *)
+(*  GROUP D.  `CasFreshnessCasSuccess' `<1>5. CasFreshnessCore'' -- the   *)
+(*  post-state's new cell at `idx(fp[self], index[self])' could be          *)
+(*  misread by a concurrent writer `w' with `fp[w] = fp[self]' and a       *)
+(*  different probe slot.  Excluding that race requires a per-fingerprint   *)
+(*  "single-writer" invariant beyond `CasFreshness'.  Still OMITTED.       *)
+(*                                                                           *)
+(*  GROUP E.  `CasFreshnessEvictStep':                                      *)
+(*  - branches `flush', `strIns', `rtrn' are fully proved;                  *)
+(*  - `nestedIns' and `set' have the bulk of their case-splits mechanised  *)
+(*    but retain OMITTED sub-cases (a) where the cell being copied (or     *)
+(*    written) could collide with `abs(fp[w])' for a concurrent writer     *)
+(*    `w' whose probe slot coincides with the source/gap of the sort, and *)
+(*    (b) a TLAPS-internal SUFFICES-time-out at this proof depth that      *)
+(*    blocks the `CasFreshnessCore'' goal-folding in the `nestedIns' THEN  *)
+(*    branch (identical pattern works at one level less of nesting);       *)
+(*  - the `idx_w \notin 1..K' sub-case in the `flush' branch is             *)
+(*    `IndexType'-blocked (same as Group C) and OMITTED.                    *)
 (***************************************************************************)
 LEMMA CasFreshnessInd ==
   Inv /\ StackOK /\ ResultType /\ EiType /\ EjType /\ LoType /\ DupInv
