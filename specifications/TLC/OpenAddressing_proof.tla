@@ -7512,8 +7512,8 @@ LEMMA SortedInvNext ==
                   <9>. SUFFICES ASSUME newexternal = <<>>
                                 PROVE  FALSE
                     OBVIOUS
-                  <9>1. base = <<>> \o ss  BY @
-                  <9>2. base = ss          BY <9>1, ConcatEmptySeq
+                  <9>1. base = <<>> \o ss  OBVIOUS
+                  <9>2. base = ss          BY <9>1, <5>B1, ConcatEmptySeq
                   <9>3. base = <<>>        BY <9>2, <7>7
                   <9>. QED  BY <9>3, <6>2
                 <8>5. n # 0  BY <8>4, EmptySeq
