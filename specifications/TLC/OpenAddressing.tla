@@ -24,6 +24,8 @@ CONSTANT K, fps, empty, Writer, Reader, L
 (***************************************************************************)
 ASSUME OAAssumption ==
        /\ K \in (Nat \ {0})
+       /\ IsFiniteSet(fps)
+       /\ Cardinality(fps) > 1
        /\ \A fp \in fps: fp \in (Nat \ {0})
        /\ empty \notin fps
        /\ L \in Nat
