@@ -33,7 +33,7 @@ Here is a list of specs included in this repository which are validated by the C
 | [Boyer-Moore Majority Vote](specifications/Majority)                                                | Stephan Merz                                        |    ✔     |      ✔      |         |     ✔     |          |
 | [Proof x+x is Even](specifications/sums_even)                                                       | Martin Riener                                       |    ✔     |      ✔      |         |     ✔     |          |
 | [The N-Queens Puzzle](specifications/N-Queens)                                                      | Stephan Merz                                        |    ✔     |             |    ✔    |     ✔     |          |
-| [The Dining Philosophers Problem](specifications/DiningPhilosophers)                                | Jeff Hemphill                                       |    ✔     |             |    ✔    |     ✔     |    ✔     |
+| [The Dining Philosophers Problem](specifications/DiningPhilosophers)                                | Jeff Hemphill, Markus Kuppe                         |    ✔     |      ✔      |   (✔)   |     ✔     |    ✔     |
 | [The Car Talk Puzzle](specifications/CarTalkPuzzle)                                                 | Leslie Lamport                                      |    ✔     |             |         |     ✔     |          |
 | [The Die Hard Problem](specifications/DieHard)                                                      | Leslie Lamport                                      |    ✔     |      ✔      |         |     ✔     |    ✔     |
 | [The Prisoners & Switches Puzzle](specifications/Prisoners)                                         | Leslie Lamport                                      |    ✔     |             |         |     ✔     |          |
@@ -106,6 +106,8 @@ Here is a list of specs included in this repository which are validated by the C
 | [Buffered Random Access File](specifications/braf)                                                  | Calvin Loncaric                                     |          |             |         |     ✔     |          |
 | [Disruptor](specifications/Disruptor)                                                               | Nicholas Schultz-Møller                             |          |             |         |     ✔     |    ✔     |
 | [DAG-based Consensus](specifications/dag-consensus)                                                 | Giuliano Losa                                       |          |             |    ✔    |     ✔     |          |
+| [German Cache-Coherence Protocol](specifications/GermanProtocol)                                    | Markus Kuppe                                        |          |             |         |     ✔     |    ✔     |
+| [FLASH Cache-Coherence Protocol](specifications/FlashProtocol)                                      | Markus Kuppe                                        |          |             |         |     ✔     |    ✔     |
 
 
 ## Other Examples

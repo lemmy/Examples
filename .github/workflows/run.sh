@@ -2,7 +2,8 @@
 
 set -ex
 
-TLC_COMMAND="java -ea -XX:+UseParallelGC -Dtlc2.TLC.stopAfter=180 -Dtlc2.TLC.ide=Github -Dutil.ExecutionStatisticsCollector.id=abcdef60f238424fa70d124d0c77ffff -cp tla2tools.jar tlc2.TLC -workers auto -lncheck final -tool -deadlock"
+TLC_JAVA="${TLC_JAVA:-${TLC_JAVA_HOME:+$TLC_JAVA_HOME/bin/java}}"
+TLC_COMMAND="${TLC_JAVA:-java} -ea -XX:+UseParallelGC -Dtlc2.TLC.stopAfter=180 -Dtlc2.TLC.ide=Github -Dutil.ExecutionStatisticsCollector.id=abcdef60f238424fa70d124d0c77ffff -cp tla2tools.jar tlc2.TLC -workers auto -lncheck final -tool -deadlock"
 
 echo Check specifications/aba-asyn-byz/aba_asyn_byz
 $TLC_COMMAND specifications/aba-asyn-byz/aba_asyn_byz
@@ -38,8 +39,8 @@ echo Check MCDieHarder
 $TLC_COMMAND specifications/DieHard/MCDieHarder || (($? == 12))  ## Expect a safety violation
 echo Check DieHard
 $TLC_COMMAND specifications/DieHard/DieHard || (($? == 12))  ## Expect a safety violation
-echo Check DiningPhilosophers
-$TLC_COMMAND specifications/DiningPhilosophers/DiningPhilosophers
+echo Check DiningPhilosophersPCal
+$TLC_COMMAND specifications/DiningPhilosophers/DiningPhilosophersPCal
 echo Check TransitiveClosure
 $TLC_COMMAND specifications/TransitiveClosure/TransitiveClosure
 echo Check MCEcho

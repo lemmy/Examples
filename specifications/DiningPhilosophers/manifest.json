@@ -1,18 +1,19 @@
 {
   "sources": [],
   "authors": [
-    "Jeff Hemphill"
+    "Jeff Hemphill",
+    "Markus Kuppe"
   ],
   "tags": [
     "beginner"
   ],
   "modules": [
     {
-      "path": "specifications/DiningPhilosophers/APDiningPhilosophers.tla",
+      "path": "specifications/DiningPhilosophers/APDiningPhilosophersPCal.tla",
       "features": [],
       "models": [
         {
-          "path": "specifications/DiningPhilosophers/APDiningPhilosophers.cfg",
+          "path": "specifications/DiningPhilosophers/APDiningPhilosophersPCal.cfg",
           "runtime": "00:00:01",
           "mode": "symbolic",
           "result": "success"
@@ -21,12 +22,27 @@
     },
     {
       "path": "specifications/DiningPhilosophers/DiningPhilosophers.tla",
+      "features": [],
+      "models": [
+        {
+          "path": "specifications/DiningPhilosophers/DiningPhilosophers.cfg",
+          "runtime": "00:00:01",
+          "mode": "exhaustive search",
+          "result": "success",
+          "distinctStates": 58,
+          "totalStates": 174,
+          "stateDepth": 6
+        }
+      ]
+    },
+    {
+      "path": "specifications/DiningPhilosophers/DiningPhilosophersPCal.tla",
       "features": [
         "pluscal"
       ],
       "models": [
         {
-          "path": "specifications/DiningPhilosophers/DiningPhilosophers.cfg",
+          "path": "specifications/DiningPhilosophers/DiningPhilosophersPCal.cfg",
           "runtime": "00:00:01",
           "mode": "exhaustive search",
           "result": "success",
@@ -35,6 +51,42 @@
           "stateDepth": 29
         }
       ]
+    },
+    {
+      "path": "specifications/DiningPhilosophers/DiningPhilosophers_anim.tla",
+      "features": [],
+      "models": [
+        {
+          "path": "specifications/DiningPhilosophers/DiningPhilosophers_anim.cfg",
+          "runtime": "00:00:01",
+          "mode": "exhaustive search",
+          "result": "success",
+          "distinctStates": 58,
+          "totalStates": 174,
+          "stateDepth": 6
+        }
+      ]
+    },
+    {
+      "path": "specifications/DiningPhilosophers/DiningPhilosophers_stats.tla",
+      "features": [],
+      "models": [
+        {
+          "path": "specifications/DiningPhilosophers/DiningPhilosophers_stats.cfg",
+          "runtime": "unknown",
+          "mode": "generate",
+          "result": "unknown",
+          "workers": 1
+        }
+      ]
+    },
+    {
+      "path": "specifications/DiningPhilosophers/DiningPhilosophers_proof.tla",
+      "features": [],
+      "models": [],
+      "proof": {
+        "maxRuntimeMinutes": 3
+      }
     }
   ]
 }

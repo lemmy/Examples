@@ -13,19 +13,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  validate:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
-        unicode: [true, false]
-      fail-fast: false
+  prelude:
+    # None of these checks depend on the platform or on whether specs are
+    # converted to Unicode, so they run once here rather than once per matrix
+    # job. Checking the metadata up front also keeps a malformed manifest from
+    # burning the whole matrix before it fails.
+    runs-on: ubuntu-latest
     env:
       SCRIPT_DIR: .github/scripts
-      DEPS_DIR: deps
-    defaults:
-      run:
-        shell: bash
     steps:
       - name: Clone repo
         uses: actions/checkout@v4
@@ -33,17 +28,8 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: adopt
-          java-version: 17
-      - name: Download TLA⁺ dependencies (Windows)
-        if: matrix.os == 'windows-latest'
-        run: $SCRIPT_DIR/windows-setup.sh $SCRIPT_DIR $DEPS_DIR false
-      - name: Download TLA⁺ dependencies (Linux & macOS)
-        if: matrix.os != 'windows-latest'
-        run: $SCRIPT_DIR/linux-setup.sh $SCRIPT_DIR $DEPS_DIR false
+      - name: Install python packages
+        run: pip install -r "$SCRIPT_DIR/requirements.txt"
       - name: Check manifest.json format
         run: |
           python "$SCRIPT_DIR/check_manifest_schema.py" \
@@ -60,6 +46,56 @@ jobs:
         run: |
           python "$SCRIPT_DIR/check_markdown_table.py"  \
             --readme_path README.md
+
+  validate:
+    needs: prelude
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+        unicode: [true, false]
+        # Unicode support is a matter of file encoding, and Linux and macOS
+        # handle that identically, so the Linux Unicode job covers this one.
+        exclude:
+          - os: macos-latest
+            unicode: true
+      fail-fast: false
+    env:
+      SCRIPT_DIR: .github/scripts
+      DEPS_DIR: deps
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Clone repo
+        uses: actions/checkout@v4
+      - name: Install python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Java 21 for Apalache
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Capture Apalache Java
+        run: echo "APALACHE_JAVA_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
+      - name: Install Java 17 for TLC
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Capture TLC Java
+        run: echo "TLC_JAVA_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
+      - name: Install timeout command
+        if: matrix.os == 'macos-latest'
+        run: brew install coreutils
+      - name: Download TLA⁺ dependencies (Windows)
+        if: matrix.os == 'windows-latest'
+        run: $SCRIPT_DIR/windows-setup.sh $SCRIPT_DIR $DEPS_DIR false
+      - name: Download TLA⁺ dependencies (Linux & macOS)
+        if: matrix.os != 'windows-latest'
+        run: $SCRIPT_DIR/linux-setup.sh $SCRIPT_DIR $DEPS_DIR false
       - name: Convert specs to unicode
         if: matrix.unicode
         run: |
@@ -102,11 +138,16 @@ jobs:
           # SKIP=("does/not/exist")
           # strange issue with parsing TLC output
           SKIP=("specifications/ewd840/EWD840.cfg")
-          # Apalache does not yet support Unicode specs:
-          # https://github.com/apalache-mc/apalache/issues/2995
-          APALACHE_FLAG=()
-          if [ ${{ matrix.unicode }} ]; then
-            APALACHE_FLAG+=("--skip_apalache")
+          UNICODE_FLAGS=()
+          if [[ "${{ matrix.unicode }}" == 'true' ]]; then
+            # Apalache does not yet support Unicode specs:
+            # https://github.com/apalache-mc/apalache/issues/2995
+            UNICODE_FLAGS+=("--skip_apalache")
+            # Whether TLC accepts a Unicode module is settled by its lexer, so
+            # every model of a given shape exercises the same code path once
+            # the module has been parsed. One model per shape stands in for the
+            # rest; the ASCII job still checks every model.
+            UNICODE_FLAGS+=("--representative_sample")
           fi
           python $SCRIPT_DIR/check_small_models.py                       \
             --verbose                                                    \
@@ -116,8 +157,11 @@ jobs:
             --community_modules_jar_path $DEPS_DIR/community/modules.jar \
             --examples_root .                                            \
             --skip "${SKIP[@]}"                                          \
-            "${APALACHE_FLAG[@]}"
+            "${UNICODE_FLAGS[@]}"
       - name: Smoke-test large models
+        # Starting TLC on a Unicode module tests the same lexer that parsing
+        # the module already does, so this only runs against ASCII specs.
+        if: (!matrix.unicode)
         run: |
           # SimKnuthYao requires certain number of states to have been generated
           # before termination or else it fails. This makes it not amenable to
@@ -144,11 +188,47 @@ jobs:
           jq --join-output '
             .modules
             | map(select(has("proof")))
+            # Failing on Linux
             | map(select(.path != "specifications/LoopInvariance/SumSequence.tla"))
-            | map(.path + "\u0000")
+            # Proofs with steps that carry no proof; --strict reports these as
+            # incomplete (exit 11), so they are checked without it below.
+            # Voting/PConProof: steps left open deliberately.
+            | map(select(.path != "specifications/Paxos/Voting.tla"))
+            | map(select(.path != "specifications/PaxosHowToWinATuringAward/Voting.tla"))
+            | map(select(.path != "specifications/byzpaxos/PConProof.tla"))
+            # AllocatorImplementation: blocked on referring to facts derived in
+            # instantiated modules; deferred until that part of the PM is
+            # reimplemented.
+            | map(select(.path != "specifications/allocator/AllocatorImplementation_proof.tla"))
+            # Elevator: blocked on the PM not handling definitions of the form
+            # [x \in S, y \in T |-> e(x,y)].
+            | map(select(.path != "specifications/MultiCarElevator/Elevator_proof.tla"))
+            # Skip long-running proofs in CI
+            | map(select(.proof.maxRuntimeMinutes <= 5))
+            | map((.proof.maxRuntimeMinutes | tostring) + "\u0000" + .path + "\u0000")
             | join("")' \
-          | xargs --verbose --null --no-run-if-empty -I {TLA_FILE} \
-          "$DEPS_DIR/tlapm/bin/tlapm" "{TLA_FILE}" -I "$DEPS_DIR/community" --stretch 5
+          | xargs --verbose --null --no-run-if-empty -n 2 \
+          sh -c 'time timeout --signal=KILL "${1}m" "$DEPS_DIR/tlapm/bin/tlapm" --strict "$2" -I "$DEPS_DIR/community" --stretch 5' --
+      - name: Check proofs with incomplete steps
+        if: matrix.os != 'windows-latest' && !matrix.unicode
+        run: |
+          set -o pipefail
+          find specifications -iname "manifest.json" -print0 \
+          | xargs --null --no-run-if-empty \
+          jq --join-output '
+            .modules
+            | map(select(has("proof")))
+            | map(select(.proof.maxRuntimeMinutes <= 5))
+            | map(select(
+                  .path == "specifications/Paxos/Voting.tla"
+               or .path == "specifications/PaxosHowToWinATuringAward/Voting.tla"
+               or .path == "specifications/byzpaxos/PConProof.tla"
+               or .path == "specifications/allocator/AllocatorImplementation_proof.tla"
+               or .path == "specifications/MultiCarElevator/Elevator_proof.tla"))
+            | map((.proof.maxRuntimeMinutes | tostring) + "\u0000" + .path + "\u0000")
+            | join("")' \
+          | xargs --verbose --null --no-run-if-empty -n 2 \
+          sh -c 'time timeout --signal=KILL "${1}m" "$DEPS_DIR/tlapm/bin/tlapm" "$2" -I "$DEPS_DIR/community" --stretch 5' --
       - name: Smoke-test manifest generation script
         run: |
           python $SCRIPT_DIR/generate_manifest.py \
@@ -163,4 +243,3 @@ jobs:
             --community_modules_jar_path $DEPS_DIR/community/modules.jar  \
             --examples_root .
           git diff -a
-

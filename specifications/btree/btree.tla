@@ -1,13 +1,13 @@
 \* Note: deletes have not been implemented
 ---- MODULE btree ----
-EXTENDS TLC,
-        Naturals,
+EXTENDS Naturals,
         FiniteSets,
-        Sequences
+        Sequences,
+        Relation
 
 CONSTANTS Vals,
-          MaxKey,
-          MaxNode,
+          Keys,
+          Nodes,
           MaxOccupancy,
 
           \* states
@@ -22,8 +22,28 @@ CONSTANTS Vals,
           SPLIT_ROOT_INNER,
           UPDATE_LEAF
 
-Keys == 1..MaxKey
-Nodes == 1..MaxNode
+States == {READY, GET_VALUE, FIND_LEAF_TO_ADD, WHICH_TO_SPLIT, ADD_TO_LEAF,
+           SPLIT_LEAF, SPLIT_INNER, SPLIT_ROOT_LEAF, SPLIT_ROOT_INNER, UPDATE_LEAF}
+
+\*
+\* Assumptions the algorithm imposes
+\*
+
+ASSUME StatesAreDistinct == IsFiniteSet(States) /\ Cardinality(States) = 10
+
+\* All the tree does with a key is compare it: ChildNodeFor descends by
+\* comparing a key against the ones a node holds, and PivotOf splits a node's
+\* keys into a smaller and a larger half.  A strict total order is therefore
+\* everything the algorithm needs of the key domain, which it does not bound.
+ASSUME KeysAreOrdered == IsStrictlyTotallyOrderedUnder(<, Keys)
+
+\* MaxOccupancy is the branching factor.  Below 2, PivotOf leaves one side of
+\* every split empty, and IsFree reports the emptied in-tree leaf as free for
+\* ChooseFreeNode to hand out a second time.
+ASSUME MaxOccupancyPermitsSplitting == MaxOccupancy \in Nat /\ MaxOccupancy >= 2
+
+\* Even the empty tree is a root node, which Init takes from the free nodes.
+ASSUME NodePoolIsNonEmpty == Nodes # {}
 
 NIL == CHOOSE x : x \notin Nodes
 MISSING == CHOOSE v : v \notin Vals
@@ -46,7 +66,7 @@ TypeOk == /\ root \in Nodes
           /\ toSplit \in Seq(Nodes)
           /\ op \in {"get", "insert", "update", NIL}
           /\ ret \in Vals \union {"ok", "error", MISSING, NIL}
-          /\ state \in {READY, GET_VALUE, FIND_LEAF_TO_ADD, WHICH_TO_SPLIT, ADD_TO_LEAF, SPLIT_LEAF, SPLIT_INNER, SPLIT_ROOT_LEAF, SPLIT_ROOT_INNER, UPDATE_LEAF}
+          /\ state \in States
 
 \* Max element in a set
 Max(xs) == CHOOSE x \in xs : (\A y \in xs \ {x} : x > y)
@@ -312,6 +332,5 @@ KeyOrderPreserved == \A n \in Inners : (\A k \in keysOf[n] : (\A kc \in keysOf[c
 LeavesCantHaveLast == \A n \in Leaves : lastOf[n] = NIL
 KeysInLeavesAreUnique ==
     \A n1, n2 \in Leaves : ((keysOf[n1] \intersect keysOf[n2]) # {}) => n1=n2
-FreeNodesRemain == \E n \in Nodes : IsFree(n)
 
 ====

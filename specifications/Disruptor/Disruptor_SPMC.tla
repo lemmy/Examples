@@ -10,22 +10,25 @@
 (* and consumers and that all consumers eventually read all published      *)
 (* values (in a Multicast fashion - i.e. all consumers read all events).   *)
 (*                                                                         *)
-(* To see a data race, try and run the model with two producers.           *)
+(* To see a data race, relax ExactlyOneWriter and run with two producers.  *)
 (***************************************************************************)
 
 EXTENDS Integers, FiniteSets, Sequences
 
 CONSTANTS
-  MaxPublished, (* Max number of published events. Bounds the model. *)
   Writers,      (* Writer/producer thread ids.                       *)
   Readers,      (* Reader/consumer thread ids.                       *)
   Size,         (* Ringbuffer size.                                  *)
   NULL
 
-ASSUME Writers /= {}
-ASSUME Readers /= {}
-ASSUME Size         \in Nat \ {0}
-ASSUME MaxPublished \in Nat \ {0}
+(* This spec is SPMC; see Disruptor_MPMC for multiple producers.           *)
+ASSUME ExactlyOneWriter       == IsFiniteSet(Writers) /\ Cardinality(Writers) = 1
+ASSUME AtLeastOneReader       == Readers /= {}
+ASSUME SizeIsPositive         == Size \in Nat \ {0}
+
+(* A thread id in both sets would share one pc between its writer and its  *)
+(* reader role, so BeginRead would enable EndWrite and vice versa.         *)
+ASSUME WritersReadersDisjoint == Writers \cap Readers = {}
 
 VARIABLES
   ringbuffer,
@@ -141,12 +144,6 @@ Spec ==
   Init /\ [][Next]_vars /\ Fairness
 
 (***************************************************************************)
-(* State constraint - bounds model:                                        *)
-(***************************************************************************)
-
-StateConstraint == published < MaxPublished
-
-(***************************************************************************)
 (* Invariants:                                                             *)
 (***************************************************************************)
 
@@ -158,14 +155,5 @@ TypeOk ==
   /\ pc        \in [ Writers \union Readers -> { Access, Advance } ]
 
 NoDataRaces == Buffer!NoDataRaces
-
-(***************************************************************************)
-(* Properties:                                                             *)
-(***************************************************************************)
-
-(* Eventually always, consumers must have read all published values.       *)
-Liveliness ==
-  \A r \in Readers : \A i \in 0 .. (MaxPublished - 1) :
-    <>[](i \in 0 .. published => Len(consumed[r]) >= i + 1 /\ consumed[r][i + 1] = i)
 
 =============================================================================
